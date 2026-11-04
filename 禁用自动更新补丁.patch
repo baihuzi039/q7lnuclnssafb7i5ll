@@ -1,0 +1,30 @@
+diff --git a/app.go b/app.go
+index 7c595cf..d535c92 100644
+--- a/app.go
++++ b/app.go
+@@ -1187,7 +1187,8 @@ func (a *App) domReady(ctx context.Context) {
+ 	}()
+ 	//检查新版本
+ 	go func() {
+-		a.CheckUpdate(0)
++		// [local-patch] 禁用启动时自动检查更新
++		// a.CheckUpdate(0)
+ 		go a.CheckStockBaseInfo(a.ctx)
+ 		go syncAllStockInfo(a.ctx)
+ 
+@@ -1195,10 +1196,11 @@ func (a *App) domReady(ctx context.Context) {
+ 			logger.SugaredLogger.Errorf("Checking for updates...")
+ 			a.CheckStockBaseInfo(a.ctx)
+ 		})
+-		a.cron.AddFunc("30 05 8,12,20 * * *", func() {
+-			logger.SugaredLogger.Errorf("Checking for updates...")
+-			a.CheckUpdate(0)
+-		})
++		// [local-patch] 禁用定时自动检查更新
++		// a.cron.AddFunc("30 05 8,12,20 * * *", func() {
++		// 	logger.SugaredLogger.Errorf("Checking for updates...")
++		// 	a.CheckUpdate(0)
++		// })
+ 		a.cron.AddFunc("30 05 8,12,20 * * *", func() {
+ 			syncAllStockInfo(a.ctx)
+ 		})
