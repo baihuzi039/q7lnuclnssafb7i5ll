@@ -1,0 +1,550 @@
+<template>
+  <div style="padding: 16px; text-align: left;">
+    <!-- 顶部操作条 -->
+    <n-card size="small" style="margin-bottom: 12px;">
+      <n-space align="center" :wrap="true">
+        <n-select
+          size="small"
+          v-model:value="periodDaysRef"
+          :options="periodOptions"
+          style="width: 170px"
+          @update:value="onPeriodChange"
+        />
+        <n-button size="small" type="primary" ghost :loading="backtestLoading" @click="runBacktest">
+          执行回测({{ runPeriodDays }}日)
+        </n-button>
+        <n-button size="small" type="info" ghost :loading="statsLoading" @click="refreshAll">
+          刷新统计
+        </n-button>
+        <n-text depth="3" style="font-size: 12px;">
+          {{ periodHint }}
+        </n-text>
+        <n-tag v-if="backtestStatsRef && backtestStatsRef.pending" size="small" type="warning" :bordered="false">
+          待回测 {{ backtestStatsRef.pending }} 条
+        </n-tag>
+      </n-space>
+    </n-card>
+
+    <template v-if="backtestStatsRef">
+      <!-- 总体统计 -->
+      <n-card title="总体统计" size="small" style="margin-bottom: 12px;">
+        <n-grid :cols="4" :x-gap="12" responsive="screen" item-responsive>
+          <n-grid-item span="4 s:1"><n-statistic label="已回测（去重后）" :value="backtestStatsRef.total || 0" /></n-grid-item>
+          <n-grid-item span="4 s:1"><n-statistic label="达标" :value="backtestStatsRef.win || 0" /></n-grid-item>
+          <n-grid-item span="4 s:1"><n-statistic label="未达标" :value="backtestStatsRef.lose || 0" /></n-grid-item>
+          <n-grid-item span="4 s:1"><n-statistic label="胜率" :value="backtestStatsRef.winRate ? backtestStatsRef.winRate.toFixed(1) : 0"><template #suffix>%</template></n-statistic></n-grid-item>
+          <n-grid-item span="4 s:1"><n-statistic label="调整后胜率" :value="backtestStatsRef.adjWinRate ? backtestStatsRef.adjWinRate.toFixed(1) : 0"><template #suffix>%</template></n-statistic></n-grid-item>
+          <n-grid-item span="4 s:1"><n-statistic label="平均超额收益" :value="fmtPct(backtestStatsRef.avgExcess)"><template #suffix>%</template></n-statistic></n-grid-item>
+          <n-grid-item span="4 s:1"><n-statistic label="平均盈利" :value="fmtPct(backtestStatsRef.avgWinReturn)"><template #suffix>%</template></n-statistic></n-grid-item>
+          <n-grid-item span="4 s:1"><n-statistic label="平均亏损" :value="fmtPct(backtestStatsRef.avgLoseReturn)"><template #suffix>%</template></n-statistic></n-grid-item>
+          <n-grid-item span="4 s:1"><n-statistic label="盈亏比" :value="backtestStatsRef.profitLossRatio ? backtestStatsRef.profitLossRatio.toFixed(2) : '-'" /></n-grid-item>
+          <n-grid-item span="4 s:2">
+            <n-text depth="3" style="font-size: 12px;">
+              去重前 {{ backtestStatsRef.rawRows || 0 }} 行（同一提示词/日期/个股/周期只计一次，重跑取均值）
+            </n-text>
+          </n-grid-item>
+        </n-grid>
+        <n-text depth="3" style="font-size: 12px; display:block; margin-top: 8px;">
+          「调整后」= 个股收益减去同日同周期推荐集合平均收益，已剔除当日普涨/普跌的环境影响；「平均超额收益」= 个股收益减去同期沪深300 收益的均值。{{ periodEvalHint }}
+        </n-text>
+      </n-card>
+
+      <!-- 按评级胜率 -->
+      <n-card title="按评级胜率" size="small" style="margin-bottom: 12px;">
+        <n-table :bordered="false" :single-line="false" size="small">
+          <thead>
+            <tr><th>评级</th><th>总数</th><th>达标</th><th>胜率</th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="(st, rating) in backtestStatsRef.byRating || {}" :key="rating">
+              <td>{{rating}}</td>
+              <td>{{st.total || 0}}</td>
+              <td>{{st.win || 0}}</td>
+              <td>{{st.winRate ? st.winRate.toFixed(1) : 0}}%</td>
+            </tr>
+            <tr v-if="!(backtestStatsRef.byRating && Object.keys(backtestStatsRef.byRating).length)">
+              <td colspan="4" style="text-align:center; color:#999;">{{ emptyHint }}</td>
+            </tr>
+          </tbody>
+        </n-table>
+      </n-card>
+
+      <!-- 按提示词统计 -->
+      <n-card title="按提示词统计" size="small" style="margin-bottom: 12px;">
+        <n-tabs type="line" size="small">
+          <n-tab-pane name="sys" tab="系统提示词">
+            <n-table :bordered="false" :single-line="false" size="small">
+              <thead>
+                <tr><th>提示词</th><th>总数</th><th>达标</th><th>达标率</th><th>调整后胜率</th><th>平均收益</th><th>平均调整后收益</th><th>盈亏比</th></tr>
+              </thead>
+              <tbody>
+                <tr v-for="(p, i) in backtestStatsRef.bySystemPrompt || []" :key="i">
+                  <td style="max-width:300px;">
+                    <n-tooltip trigger="hover">
+                      <template #trigger>
+                        <n-button text type="primary" style="cursor:pointer;" @click="filterBacktestByPrompt('sys', p)">{{p.name}}</n-button>
+                      </template>
+                      点击按该提示词过滤下方「最近回测明细」
+                    </n-tooltip>
+                  </td>
+                  <td>{{p.total}}</td>
+                  <td>{{p.win}}</td>
+                  <td :style="{color: (p.winRate||0)>=50 ? '#18a058' : '#d03050'}">{{p.winRate ? p.winRate.toFixed(1) : 0}}%</td>
+                  <td :style="{color: (p.adjWinRate||0)>=50 ? '#18a058' : '#d03050'}">{{p.adjWinRate ? p.adjWinRate.toFixed(1) : 0}}%</td>
+                  <td>{{fmtPct(p.avgReturn)}}%</td>
+                  <td>{{fmtPct(p.avgAdjReturn)}}%</td>
+                  <td>{{p.profitLossRatio ? p.profitLossRatio.toFixed(2) : '-'}}</td>
+                </tr>
+                <tr v-if="!(backtestStatsRef.bySystemPrompt && backtestStatsRef.bySystemPrompt.length)">
+                  <td colspan="8" style="text-align:center; color:#999;">暂无数据</td>
+                </tr>
+              </tbody>
+            </n-table>
+          </n-tab-pane>
+          <n-tab-pane name="usr" tab="用户提示词">
+            <n-table :bordered="false" :single-line="false" size="small">
+              <thead>
+                <tr><th>提示词</th><th>总数</th><th>达标</th><th>达标率</th><th>调整后胜率</th><th>平均收益</th><th>平均调整后收益</th><th>盈亏比</th></tr>
+              </thead>
+              <tbody>
+                <tr v-for="(p, i) in backtestStatsRef.byUserPrompt || []" :key="i">
+                  <td style="max-width:300px;">
+                    <n-tooltip trigger="hover">
+                      <template #trigger>
+                        <n-button text type="primary" style="cursor:pointer;" @click="filterBacktestByPrompt('usr', p)">{{p.name}}</n-button>
+                      </template>
+                      点击按该提示词过滤下方「最近回测明细」
+                    </n-tooltip>
+                  </td>
+                  <td>{{p.total}}</td>
+                  <td>{{p.win}}</td>
+                  <td :style="{color: (p.winRate||0)>=50 ? '#18a058' : '#d03050'}">{{p.winRate ? p.winRate.toFixed(1) : 0}}%</td>
+                  <td :style="{color: (p.adjWinRate||0)>=50 ? '#18a058' : '#d03050'}">{{p.adjWinRate ? p.adjWinRate.toFixed(1) : 0}}%</td>
+                  <td>{{fmtPct(p.avgReturn)}}%</td>
+                  <td>{{fmtPct(p.avgAdjReturn)}}%</td>
+                  <td>{{p.profitLossRatio ? p.profitLossRatio.toFixed(2) : '-'}}</td>
+                </tr>
+                <tr v-if="!(backtestStatsRef.byUserPrompt && backtestStatsRef.byUserPrompt.length)">
+                  <td colspan="8" style="text-align:center; color:#999;">暂无数据</td>
+                </tr>
+              </tbody>
+            </n-table>
+          </n-tab-pane>
+        </n-tabs>
+      </n-card>
+
+      <!-- 达标率最高 -->
+      <n-card title="达标率最高" size="small" style="margin-bottom: 12px;">
+        <n-table :bordered="false" :single-line="false" size="small">
+          <tbody>
+            <tr v-if="backtestStatsRef.bestModel"><td style="width:120px;">最佳模型</td><td>{{backtestStatsRef.bestModel.name}}（达标率 {{backtestStatsRef.bestModel.winRate.toFixed(1)}}%，N={{backtestStatsRef.bestModel.total}}）</td></tr>
+            <tr v-if="backtestStatsRef.bestSystemPrompt"><td style="width:120px;">最佳系统提示词</td><td>{{backtestStatsRef.bestSystemPrompt.name}}（达标率 {{backtestStatsRef.bestSystemPrompt.winRate.toFixed(1)}}%，N={{backtestStatsRef.bestSystemPrompt.total}}）</td></tr>
+            <tr v-if="backtestStatsRef.bestUserPrompt"><td style="width:120px;">最佳用户提示词</td><td>{{backtestStatsRef.bestUserPrompt.name}}（达标率 {{backtestStatsRef.bestUserPrompt.winRate.toFixed(1)}}%，N={{backtestStatsRef.bestUserPrompt.total}}）</td></tr>
+            <tr v-if="backtestStatsRef.bestSkill"><td style="width:120px;">最佳技能</td><td>{{backtestStatsRef.bestSkill.name}}（达标率 {{backtestStatsRef.bestSkill.winRate.toFixed(1)}}%，N={{backtestStatsRef.bestSkill.total}}）</td></tr>
+            <tr v-if="!backtestStatsRef.bestModel && !backtestStatsRef.bestSystemPrompt && !backtestStatsRef.bestUserPrompt && !backtestStatsRef.bestSkill">
+              <td colspan="2" style="text-align:center; color:#999;">暂无数据</td>
+            </tr>
+          </tbody>
+        </n-table>
+      </n-card>
+
+      <!-- 按提示词模板统计 -->
+      <n-card title="按提示词模板统计" size="small" style="margin-bottom: 12px;">
+        <n-table :bordered="false" :single-line="false" size="small">
+          <thead>
+            <tr><th>模板</th><th>样本</th><th>超额胜率</th><th>平均收益</th><th>平均超额</th><th>波动率</th><th>CV</th><th>最大回撤</th><th>累计收益</th><th>评分</th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="t in backtestStatsRef.byTemplate || []" :key="t.templateId">
+              <td style="max-width:220px;">
+                <n-tooltip trigger="hover">
+                  <template #trigger>
+                    <n-button text type="primary" style="cursor:pointer;" @click="filterBacktestByTemplate(t)">{{t.templateName}}</n-button>
+                  </template>
+                  点击按该模板过滤下方「最近回测明细」
+                </n-tooltip>
+              </td>
+              <td>{{t.total}}<n-text depth="3" v-if="t.total < 10" style="font-size:12px;">（样本少）</n-text></td>
+              <td :style="{color: (t.excessWinRate||0)>=50 ? '#18a058' : '#d03050'}">{{t.excessWinRate ? t.excessWinRate.toFixed(1) : 0}}%</td>
+              <td :style="{color: (t.avgReturn||0)>=0 ? '#d03050' : '#18a058'}">{{t.avgReturn ? t.avgReturn.toFixed(2) : 0}}%</td>
+              <td :style="{color: (t.avgExcess||0)>=0 ? '#d03050' : '#18a058'}">{{t.avgExcess ? t.avgExcess.toFixed(2) : 0}}%</td>
+              <td>{{t.volatility ? t.volatility.toFixed(2) : 0}}%</td>
+              <td>{{fmtTemplateCV(t.cv)}}</td>
+              <td style="color:#18a058;">{{t.maxDrawdown ? t.maxDrawdown.toFixed(2) : 0}}%</td>
+              <td :style="{color: (t.cumReturn||0)>=0 ? '#d03050' : '#18a058'}">{{t.cumReturn ? t.cumReturn.toFixed(2) : 0}}%</td>
+              <td><n-tag size="small" :type="(t.score||0)>=60 ? 'success' : ((t.score||0)>=40 ? 'warning' : 'error')" :bordered="false">{{t.score ?? 0}}</n-tag></td>
+            </tr>
+            <tr v-if="!(backtestStatsRef.byTemplate && backtestStatsRef.byTemplate.length)">
+              <td colspan="10" style="text-align:center; color:#999;">暂无数据</td>
+            </tr>
+          </tbody>
+        </n-table>
+      </n-card>
+
+      <!-- 按技能统计 -->
+      <n-card title="按技能统计" size="small" style="margin-bottom: 12px;">
+        <n-table :bordered="false" :single-line="false" size="small">
+          <thead>
+            <tr><th>技能</th><th>总数</th><th>达标</th><th>达标率</th><th>调整后胜率</th><th>平均收益</th><th>平均调整后收益</th><th>盈亏比</th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="s in backtestStatsRef.bySkill || []" :key="s.name">
+              <td style="max-width:260px;">
+                <n-tooltip trigger="hover">
+                  <template #trigger>
+                    <n-button text type="primary" style="cursor:pointer;" @click="filterBacktestBySkill(s)">{{s.name}}</n-button>
+                  </template>
+                  点击按该技能过滤下方「最近回测明细」
+                </n-tooltip>
+              </td>
+              <td>{{s.total}}</td>
+              <td>{{s.win}}</td>
+              <td :style="{color: (s.winRate||0)>=50 ? '#18a058' : '#d03050'}">{{s.winRate ? s.winRate.toFixed(1) : 0}}%</td>
+              <td :style="{color: (s.adjWinRate||0)>=50 ? '#18a058' : '#d03050'}">{{s.adjWinRate ? s.adjWinRate.toFixed(1) : 0}}%</td>
+              <td>{{fmtPct(s.avgReturn)}}%</td>
+              <td>{{fmtPct(s.avgAdjReturn)}}%</td>
+              <td>{{s.profitLossRatio ? s.profitLossRatio.toFixed(2) : '-'}}</td>
+            </tr>
+            <tr v-if="!(backtestStatsRef.bySkill && backtestStatsRef.bySkill.length)">
+              <td colspan="8" style="text-align:center; color:#999;">暂无技能推荐数据（使用技能产生推荐并回测后显示；存量记录未记录技能ID）</td>
+            </tr>
+          </tbody>
+        </n-table>
+      </n-card>
+
+      <!-- 按买入价折溢价分档统计 -->
+      <n-card title="按买入价折溢价分档统计" size="small" style="margin-bottom: 12px;">
+        <n-text depth="3" style="font-size: 12px; display:block; margin-bottom: 8px;">
+          折溢价 = 建议买入价区间中值相对推荐日收盘价的偏离（负=折价买入，正=追高）。用于判断「低吸」是否优于「追涨」。
+        </n-text>
+        <n-table :bordered="false" :single-line="false" size="small">
+          <thead>
+            <tr><th>折溢价档位</th><th>总数</th><th>达标</th><th>达标率</th><th>调整后胜率</th><th>平均收益</th><th>平均调整后收益</th><th>盈亏比</th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="b in backtestStatsRef.byDiscountBucket || []" :key="b.name">
+              <td>{{b.name}}</td>
+              <td>{{b.total}}</td>
+              <td>{{b.win}}</td>
+              <td :style="{color: (b.winRate||0)>=50 ? '#18a058' : '#d03050'}">{{b.winRate ? b.winRate.toFixed(1) : 0}}%</td>
+              <td :style="{color: (b.adjWinRate||0)>=50 ? '#18a058' : '#d03050'}">{{b.adjWinRate ? b.adjWinRate.toFixed(1) : 0}}%</td>
+              <td>{{fmtPct(b.avgReturn)}}%</td>
+              <td>{{fmtPct(b.avgAdjReturn)}}%</td>
+              <td>{{b.profitLossRatio ? b.profitLossRatio.toFixed(2) : '-'}}</td>
+            </tr>
+            <tr v-if="!(backtestStatsRef.byDiscountBucket && backtestStatsRef.byDiscountBucket.length)">
+              <td colspan="8" style="text-align:center; color:#999;">暂无数据</td>
+            </tr>
+          </tbody>
+        </n-table>
+      </n-card>
+
+      <!-- 按 AI 配置名统计 -->
+      <n-card title="按 AI 配置名统计" size="small" style="margin-bottom: 12px;">
+        <n-text depth="3" style="font-size: 12px; display:block; margin-bottom: 8px;">
+          配置名为用户在「AI 配置」中自定义的名称（如「四维共振策略」），与真实模型名（按模型统计）分开，避免配置名混入模型口径。
+        </n-text>
+        <n-table :bordered="false" :single-line="false" size="small">
+          <thead>
+            <tr><th>配置名</th><th>总数</th><th>达标</th><th>达标率</th><th>调整后胜率</th><th>平均收益</th><th>平均调整后收益</th><th>盈亏比</th></tr>
+          </thead>
+          <tbody>
+            <tr v-for="c in backtestStatsRef.byConfigName || []" :key="c.name">
+              <td style="max-width:260px;">{{c.name}}</td>
+              <td>{{c.total}}</td>
+              <td>{{c.win}}</td>
+              <td :style="{color: (c.winRate||0)>=50 ? '#18a058' : '#d03050'}">{{c.winRate ? c.winRate.toFixed(1) : 0}}%</td>
+              <td :style="{color: (c.adjWinRate||0)>=50 ? '#18a058' : '#d03050'}">{{c.adjWinRate ? c.adjWinRate.toFixed(1) : 0}}%</td>
+              <td>{{fmtPct(c.avgReturn)}}%</td>
+              <td>{{fmtPct(c.avgAdjReturn)}}%</td>
+              <td>{{c.profitLossRatio ? c.profitLossRatio.toFixed(2) : '-'}}</td>
+            </tr>
+            <tr v-if="!(backtestStatsRef.byConfigName && backtestStatsRef.byConfigName.length)">
+              <td colspan="8" style="text-align:center; color:#999;">暂无数据（新推荐记录才会写入配置名）</td>
+            </tr>
+          </tbody>
+        </n-table>
+      </n-card>
+
+      <!-- 最近回测明细 -->
+      <n-card title="最近回测明细" size="small">
+        <div v-if="backtestTemplateFilter || backtestPromptFilter || backtestSkillFilter" style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+          <n-tag v-if="backtestTemplateFilter" type="warning" closable @close="clearBacktestTemplateFilter">{{backtestTemplateFilterLabel}}</n-tag>
+          <n-tag v-if="backtestPromptFilter" type="warning" closable @close="clearBacktestPromptFilter">{{backtestPromptFilterLabel}}</n-tag>
+          <n-tag v-if="backtestSkillFilter" type="warning" closable @close="clearBacktestSkillFilter">{{backtestSkillFilterLabel}}</n-tag>
+          <n-text depth="3">共 {{backtestTotalRef}} 条（点击提示词/模板/技能可过滤，关闭标签恢复全部）</n-text>
+        </div>
+        <n-data-table
+          remote
+          size="small"
+          :columns="backtestListColumns"
+          :data="backtestListRef"
+          :loading="backtestListLoading"
+          :pagination="{ page: backtestPageRef, pageSize: backtestPageSizeRef, itemCount: backtestTotalRef, onChange: (p) => loadBacktestList(p) }"
+          style="max-height: 420px;"
+        />
+      </n-card>
+    </template>
+    <n-empty v-else-if="!statsLoading" :description="emptyHint" style="padding: 60px;" />
+  </div>
+</template>
+
+<script setup>
+import {computed, h, onMounted, ref} from 'vue'
+import {NTag, NText, useNotification} from 'naive-ui'
+import {
+  RunRecommendBacktest, ListRecommendBacktest, ListRecommendBacktestByPrompt,
+  ListRecommendBacktestByTemplate, ListRecommendBacktestBySkill, GetRecommendBacktestStats
+} from '../../wailsjs/go/main/App'
+
+const notify = useNotification()
+
+// ===== 总体统计 =====
+const backtestStatsRef = ref(null)
+const statsLoading = ref(false)
+// ===== 执行回测 =====
+const backtestLoading = ref(false)
+
+// ===== 持有期（回测周期）筛选：0 = 全部周期（混合） =====
+const periodDaysRef = ref(5)
+const periodOptions = [
+  { label: '5 交易日持有期', value: 5 },
+  { label: '3 交易日持有期', value: 3 },
+  { label: '10 交易日持有期', value: 10 },
+  { label: '20 交易日持有期', value: 20 },
+  { label: '30 交易日持有期', value: 30 },
+  { label: '全部周期（混合）', value: 0 }
+]
+// 统计与明细按选中周期过滤（0 表示不过滤）
+const queryPeriodDays = computed(() => periodDaysRef.value || 0)
+// 执行回测的周期：选「全部周期」时按默认 5 日执行
+const runPeriodDays = computed(() => periodDaysRef.value || 5)
+const periodHint = computed(() => periodDaysRef.value
+  ? `统计与明细均为 ${periodDaysRef.value} 个交易日持有期的回测结果（收益 vs 沪深300），点击提示词/模板行可过滤下方明细。`
+  : '当前为全部持有期的混合统计（不同周期收益被合并平均），建议选择具体周期查看。')
+const emptyHint = computed(() => `当前持有期（${periodDaysRef.value ? periodDaysRef.value + ' 个交易日' : '全部周期'}）暂无回测数据，可点击「执行回测」生成`)
+// 按持有周期分开评估：短线（≤5 日）以胜率为主，中线（≥10 日）以盈亏比与平均收益为主
+const periodEvalHint = computed(() => {
+  const p = periodDaysRef.value
+  if (!p) return '短线看胜率、中线看盈亏比与平均收益，建议切换具体持有期分别评估。'
+  if (p <= 5) return `${p} 日属短线口径，重点看胜率/调整后胜率。`
+  return `${p} 日属中线口径，重点看盈亏比与平均收益。`
+})
+
+// 百分比展示：保留两位小数，空值显示 0
+function fmtPct(v) {
+  return Number(v || 0).toFixed(2)
+}
+
+function onPeriodChange() {
+  backtestPageRef.value = 1
+  loadBacktestStats()
+  loadBacktestList(1)
+}
+
+// ===== 回测明细 =====
+const backtestListRef = ref([])
+const backtestTotalRef = ref(0)
+const backtestListLoading = ref(false)
+const backtestPageRef = ref(1)
+const backtestPageSizeRef = ref(10)
+// 当前按提示词过滤条件：{ type: 'sys'|'usr', content, label }，null 表示不过滤
+const backtestPromptFilter = ref(null)
+const backtestPromptFilterLabel = computed(() => {
+  const f = backtestPromptFilter.value
+  if (!f) return ''
+  return (f.type === 'sys' ? '系统提示词' : '用户提示词') + '：' + f.label
+})
+// 当前按提示词模板过滤条件：{ templateId, label }，null 表示不过滤（优先级高于提示词过滤）
+const backtestTemplateFilter = ref(null)
+const backtestTemplateFilterLabel = computed(() => {
+  const f = backtestTemplateFilter.value
+  if (!f) return ''
+  return '模板：' + f.label
+})
+// 当前按技能过滤条件：{ skillId, label }，null 表示不过滤
+const backtestSkillFilter = ref(null)
+const backtestSkillFilterLabel = computed(() => {
+  const f = backtestSkillFilter.value
+  if (!f) return ''
+  return '技能：' + f.label
+})
+
+// 明细百分比单元格：统一带 % 号（此前仅列名带 %，数值缺 %），colored 时按正负着色（红涨绿跌）
+function pctCell(v, colored) {
+  const txt = Number(v || 0).toFixed(2) + '%'
+  if (!colored) return txt
+  return h(NText, { type: (v || 0) >= 0 ? 'error' : 'success' }, { default: () => txt })
+}
+
+const backtestListColumns = [
+  { title: '推荐时间', key: 'time', render: (row) => row.recommendTimeStr || '-' },
+  { title: '股票', key: 'stock', render: (row) => `${row.stockName} ${row.stockCode}` },
+  { title: '周期', key: 'periodDays', width: 70 },
+  { title: '推荐价', key: 'recommendPrice', width: 90 },
+  { title: '期末价', key: 'endPrice', width: 90 },
+  { title: '收益', key: 'returnPct', width: 90, render: (row) => pctCell(row.returnPct, true) },
+  { title: '基准', key: 'benchmarkPct', width: 80, render: (row) => pctCell(row.benchmarkPct, false) },
+  { title: '超额', key: 'excessPct', width: 80, render: (row) => pctCell(row.excessPct, false) },
+  { title: '调整后', key: 'adjReturnPct', width: 90, render: (row) => pctCell(row.adjReturnPct, true) },
+  { title: '买入溢价', key: 'buyPremiumPct', width: 100, render: (row) => pctCell(row.buyPremiumPct, false) },
+  { title: '配置名', key: 'configName', width: 120, ellipsis: { tooltip: true }, render: (row) => row.configName || '—' },
+  { title: '结果', key: 'outcome', width: 90, render: (row) => row.outcome === 'win' ? h(NTag, { size: 'tiny', type: 'error', bordered: false }, { default: () => '达标' }) : h(NTag, { size: 'tiny', type: 'success', bordered: false }, { default: () => '未达标' }) },
+  { title: '技能', key: 'skillId', width: 140, ellipsis: { tooltip: true }, render: (row) => row.skillId || '—' },
+]
+
+function normalizeBacktestItem(it) {
+  const bt = it.AiRecommendBacktest || it || {}
+  const recommendId = bt.RecommendId ?? bt.recommendId
+  const outcome = bt.Outcome ?? bt.outcome
+  const stockName = bt.StockName ?? bt.stockName
+  const stockCode = bt.StockCode ?? bt.stockCode
+  const periodDays = bt.PeriodDays ?? bt.periodDays
+  const recommendPrice = bt.RecommendPrice ?? bt.recommendPrice
+  const endPrice = bt.EndPrice ?? bt.endPrice
+  const returnPct = bt.ReturnPct ?? bt.returnPct
+  const benchmarkPct = bt.BenchmarkPct ?? bt.benchmarkPct
+  const excessPct = bt.ExcessPct ?? bt.excessPct
+  const adjReturnPct = bt.AdjReturnPct ?? bt.adjReturnPct ?? 0
+  const buyPremiumPct = bt.BuyPremiumPct ?? bt.buyPremiumPct ?? 0
+  const configName = bt.ConfigName ?? bt.configName ?? ''
+  const skillId = bt.SkillId ?? bt.skillId ?? ''
+  return {
+    recommendId, outcome,
+    stockName, stockCode, periodDays, recommendPrice,
+    endPrice, returnPct, benchmarkPct, excessPct, adjReturnPct, buyPremiumPct, configName, skillId,
+    recommendTimeStr: it.recommendTimeStr || '',
+  }
+}
+
+function loadBacktestStats() {
+  statsLoading.value = true
+  GetRecommendBacktestStats(queryPeriodDays.value).then((res) => {
+    backtestStatsRef.value = res || null
+  }).catch(() => {
+    backtestStatsRef.value = null
+  }).finally(() => {
+    statsLoading.value = false
+  })
+}
+
+function loadBacktestList(p) {
+  const page = p || backtestPageRef.value
+  backtestPageRef.value = page
+  backtestListLoading.value = true
+  const tf = backtestTemplateFilter.value
+  const f = backtestPromptFilter.value
+  const sf = backtestSkillFilter.value
+  let req
+  if (tf) {
+    req = ListRecommendBacktestByTemplate(page, backtestPageSizeRef.value, tf.templateId, queryPeriodDays.value)
+  } else if (sf) {
+    req = ListRecommendBacktestBySkill(page, backtestPageSizeRef.value, sf.skillId, queryPeriodDays.value)
+  } else if (f) {
+    req = ListRecommendBacktestByPrompt(page, backtestPageSizeRef.value, f.content, f.type, queryPeriodDays.value)
+  } else {
+    req = ListRecommendBacktest(page, backtestPageSizeRef.value, queryPeriodDays.value)
+  }
+  try {
+    req.then((res) => {
+      const list = res?.list || []
+      backtestTotalRef.value = res?.total || 0
+      backtestListRef.value = list.map(normalizeBacktestItem)
+    }).catch((e) => {
+      backtestListRef.value = []
+      backtestTotalRef.value = 0
+      notify.error({ content: '加载回测明细失败：' + (e?.message || e || '未知错误'), duration: 4000 })
+    }).finally(() => {
+      backtestListLoading.value = false
+    })
+  } catch (e) {
+    backtestListRef.value = []
+    backtestTotalRef.value = 0
+    backtestListLoading.value = false
+    notify.error({ content: '加载回测明细失败：' + (e?.message || e || '未知错误'), duration: 4000 })
+  }
+}
+
+// 点击某条提示词统计，按该提示词过滤下方「最近回测明细」
+function filterBacktestByPrompt(type, g) {
+  if (!g || !g.content) {
+    notify.warning({ content: '该提示词内容为空，无法过滤', duration: 2000 })
+    return
+  }
+  backtestTemplateFilter.value = null
+  backtestSkillFilter.value = null
+  backtestPromptFilter.value = { type, content: g.content, label: g.name || g.content }
+  backtestPageRef.value = 1
+  loadBacktestList(1)
+}
+
+// 清除提示词过滤条件
+function clearBacktestPromptFilter() {
+  backtestPromptFilter.value = null
+  backtestPageRef.value = 1
+  loadBacktestList(1)
+}
+
+// 点击某条模板统计，按该模板过滤下方「最近回测明细」
+function filterBacktestByTemplate(t) {
+  if (!t) return
+  backtestPromptFilter.value = null
+  backtestSkillFilter.value = null
+  backtestTemplateFilter.value = { templateId: t.templateId, label: t.templateName || ('模板#' + t.templateId) }
+  backtestPageRef.value = 1
+  loadBacktestList(1)
+}
+
+// 清除模板过滤条件
+function clearBacktestTemplateFilter() {
+  backtestTemplateFilter.value = null
+  backtestPageRef.value = 1
+  loadBacktestList(1)
+}
+
+// 点击某条技能统计，按该技能过滤下方「最近回测明细」
+function filterBacktestBySkill(s) {
+  if (!s || !s.name) return
+  backtestPromptFilter.value = null
+  backtestTemplateFilter.value = null
+  backtestSkillFilter.value = { skillId: s.name, label: s.name }
+  backtestPageRef.value = 1
+  loadBacktestList(1)
+}
+
+// 清除技能过滤条件
+function clearBacktestSkillFilter() {
+  backtestSkillFilter.value = null
+  backtestPageRef.value = 1
+  loadBacktestList(1)
+}
+
+// 模板统计 CV 显示（-1 表示均值≈0 无效）
+function fmtTemplateCV(cv) {
+  if (cv === null || cv === undefined) return '-'
+  if (cv < 0) return '—'
+  return Number(cv).toFixed(2)
+}
+
+function runBacktest() {
+  backtestLoading.value = true
+  RunRecommendBacktest(runPeriodDays.value).then((res) => {
+    notify.info({ content: res, duration: 4000 })
+    backtestLoading.value = false
+    loadBacktestStats()
+    loadBacktestList(1)
+  }).catch(() => {
+    backtestLoading.value = false
+  })
+}
+
+function refreshAll() {
+  loadBacktestStats()
+  loadBacktestList(1)
+}
+
+onMounted(() => {
+  loadBacktestStats()
+  loadBacktestList(1)
+})
+</script>

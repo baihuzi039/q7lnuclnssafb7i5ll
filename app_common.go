@@ -1,0 +1,894 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"go-stock/backend/agent"
+	"go-stock/backend/data"
+	"go-stock/backend/db"
+	"go-stock/backend/logger"
+	"go-stock/backend/models"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/cloudwego/eino/schema"
+	"github.com/duke-git/lancet/v2/convertor"
+	"github.com/wailsapp/wails/v2/pkg/runtime"
+)
+
+// @Author spark
+// @Date 2025/6/8 20:45
+// @Desc
+//--------------------------------------------------------------------------------
+
+var ShanghaiTimezone = time.FixedZone("CST", 8*60*60)
+
+func GetShanghaiTime() time.Time {
+	return time.Now().In(ShanghaiTimezone)
+}
+
+func FormatShanghaiTime(t time.Time) string {
+	return t.In(ShanghaiTimezone).Format("2006-01-02 15:04:05")
+}
+
+func (a *App) GetTimezone() map[string]any {
+	return map[string]any{
+		"offset":   8 * 60 * 60,
+		"location": "Asia/Shanghai",
+	}
+}
+
+// VacuumDatabase 手动压缩数据库文件（VACUUM），回收已清理数据占用的磁盘空间。
+// SQLite 的 DELETE 不归还磁盘空间，高频写入表长期清理后文件会远大于实际数据量，
+// 导致查询扫描页面数、磁盘 IO 放大而拖慢其它页面。
+// 注意：耗时较长且全程独占写锁，请在非交易时段执行，执行期间其它写入会排队等待。
+func (a *App) VacuumDatabase() string {
+	res, err := db.Vacuum()
+	if err != nil {
+		logger.SugaredLogger.Errorf("VacuumDatabase error: %v", err)
+		return "数据库压缩失败：" + err.Error()
+	}
+	toMB := func(b int64) string { return fmt.Sprintf("%.1f MB", float64(b)/(1024*1024)) }
+	msg := fmt.Sprintf("数据库压缩完成：%s → %s，释放 %s，耗时 %.1f 秒",
+		toMB(res.BeforeBytes), toMB(res.AfterBytes), toMB(res.FreedBytes), res.DurationSec)
+	logger.SugaredLogger.Infof("VacuumDatabase success: %s (file=%s)", msg, res.FilePath)
+	return msg
+}
+
+// SendDesktopNotification 发送系统桌面通知（Windows Toast / macOS 通知中心 / Linux beeep），
+// 受设置页「本地推送」开关控制。供 AI Agent 后台任务完成提醒等场景使用。
+func (a *App) SendDesktopNotification(title, content string) bool {
+	return data.NewAlertWindowsApi("go-stock", title, content, "").SendNotification()
+}
+
+// ExportSessionMarkdown 将 AI 助手会话导出为 Markdown 文件：弹出系统保存对话框由用户选择位置后写入。
+// 返回值："" 表示保存成功；"cancelled" 表示用户取消；其它文本为失败原因。
+func (a *App) ExportSessionMarkdown(defaultName, content string) string {
+	filePath, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
+		Title:           "导出会话为 Markdown",
+		DefaultFilename: defaultName + ".md",
+		Filters: []runtime.FileFilter{
+			{DisplayName: "Markdown 文档", Pattern: "*.md"},
+		},
+	})
+	if err != nil {
+		logger.SugaredLogger.Errorf("ExportSessionMarkdown SaveFileDialog error: %v", err)
+		return "无法打开保存对话框：" + err.Error()
+	}
+	// 用户取消保存
+	if filePath == "" {
+		return "cancelled"
+	}
+	if err = os.WriteFile(filepath.Clean(filePath), []byte(content), os.ModePerm); err != nil {
+		logger.SugaredLogger.Errorf("ExportSessionMarkdown WriteFile error: %v", err)
+		return "保存失败：" + err.Error()
+	}
+	return ""
+}
+
+func (a *App) LongTigerRank(date string) *[]models.LongTigerRankData {
+	return data.NewMarketNewsApi().LongTiger(date)
+}
+
+// GetLhbSeatDetail 查询个股某交易日龙虎榜买5卖5席位明细（游资/机构买卖数据）
+func (a *App) GetLhbSeatDetail(stockCode, date string) *models.LhbSeatDetailData {
+	return data.NewLhbSeatApi().GetLhbSeatDetail(stockCode, date)
+}
+
+// GetLhbDailySummary 汇总某交易日龙虎榜游资/机构动向（当日游资买了啥卖了啥）
+func (a *App) GetLhbDailySummary(date string) *models.LhbDailySummary {
+	return data.NewLhbSeatApi().GetLhbDailySummary(date)
+}
+
+// RefreshHotMoneySeats 从远程 URL 刷新游资席位名录（data/hot_money_seats.json）
+func (a *App) RefreshHotMoneySeats(url string) error {
+	return data.RefreshHotMoneySeats(url)
+}
+
+// GetHotMoneySeats 读取游资席位名录（游资名录维护页面）
+func (a *App) GetHotMoneySeats() *data.HotMoneySeatFile {
+	return data.GetHotMoneySeats()
+}
+
+// SaveHotMoneySeats 保存游资席位名录（落盘并即时生效）
+func (a *App) SaveHotMoneySeats(f *data.HotMoneySeatFile) error {
+	return data.SaveHotMoneySeats(f)
+}
+
+// ResetHotMoneySeats 重置游资席位名录为内置数据
+func (a *App) ResetHotMoneySeats() error {
+	return data.ResetHotMoneySeats()
+}
+
+func (a *App) StockResearchReport(stockCode string) []any {
+	return data.NewMarketNewsApi().StockResearchReport(stockCode, 7)
+}
+func (a *App) StockNotice(stockCode string) []any {
+	return data.NewMarketNewsApi().StockNotice(stockCode)
+}
+
+func (a *App) IndustryResearchReport(industryCode string) []any {
+	return data.NewMarketNewsApi().IndustryResearchReport(industryCode, 7)
+}
+func (a *App) EMDictCode(code string) []any {
+	return data.NewMarketNewsApi().EMDictCode(code, a.cache)
+}
+
+func (a *App) AnalyzeSentiment(text string) models.SentimentResult {
+	return data.AnalyzeSentiment(text)
+}
+
+func (a *App) HotStock(marketType string) *[]models.HotItem {
+	// "20"/"21"/"22" 为币安 USDT-M 永续合约榜单（涨跌幅/成交额/资金费率），
+	// "30"/"31"/"32" 为 Bitget 美股永续合约榜单，其余沿用雪球热度
+	switch strings.TrimSpace(marketType) {
+	case "20":
+		return data.BinanceHotStock(100, "percent")
+	case "21":
+		return data.BinanceHotStock(100, "amount")
+	case "22":
+		return data.BinanceHotStock(100, "funding")
+	case "30":
+		return data.BitgetHotStock(100, "percent")
+	case "31":
+		return data.BitgetHotStock(100, "amount")
+	case "32":
+		return data.BitgetHotStock(100, "funding")
+	}
+	return data.NewMarketNewsApi().XUEQIUHotStock(100, marketType)
+}
+
+func (a *App) HotEvent(size int) *[]models.HotEvent {
+	if size <= 0 {
+		size = 10
+	}
+	return data.NewMarketNewsApi().HotEvent(size)
+}
+func (a *App) HotTopic(size int) []any {
+	if size <= 0 {
+		size = 10
+	}
+	return data.NewMarketNewsApi().HotTopic(size)
+}
+
+func (a *App) InvestCalendarTimeLine(yearMonth string) []any {
+	return data.NewMarketNewsApi().InvestCalendar(yearMonth)
+}
+func (a *App) ClsCalendar() []any {
+	return data.NewMarketNewsApi().ClsCalendar()
+}
+
+// ConceptEventList 同花顺每日炒作题材事件列表
+func (a *App) ConceptEventList(date string) *[]models.ConceptEventDay {
+	return data.NewMarketNewsApi().ConceptEventList(date)
+}
+
+// ConceptDetail 同花顺概念详情页数据（板块代码、行情、定义、成分股）
+func (a *App) ConceptDetail(conceptCode string) *models.ConceptDetailInfo {
+	return data.NewMarketNewsApi().ConceptDetail(conceptCode)
+}
+
+// ConceptKLine 同花顺概念板块 K 线数据
+func (a *App) ConceptKLine(plateCode string) *models.ConceptKLineData {
+	return data.NewMarketNewsApi().ConceptKLine(plateCode)
+}
+
+// ConceptRealHead 同花顺概念板块实时行情
+func (a *App) ConceptRealHead(plateCode string) *models.ConceptMarket {
+	return data.NewMarketNewsApi().ConceptRealHead(plateCode)
+}
+
+// GetAllConceptPlates 同花顺所有概念板块字典
+func (a *App) GetAllConceptPlates() []data.ConceptPlate {
+	return data.NewMarketNewsApi().GetAllConceptPlates()
+}
+
+// FindConceptCodeByName 通过名称查找概念代码
+func (a *App) FindConceptCodeByName(name string) string {
+	return data.NewMarketNewsApi().FindConceptCodeByName(name)
+}
+
+// ConceptStocks 同花顺概念成分股列表（分页）
+func (a *App) ConceptStocks(conceptCode string, page int) []models.ConceptStock {
+	return data.NewMarketNewsApi().ConceptStocks(conceptCode, page)
+}
+
+// GetAllIndustryPlates 同花顺所有行业板块字典
+func (a *App) GetAllIndustryPlates() []data.IndustryPlate {
+	return data.NewMarketNewsApi().GetAllIndustryPlates()
+}
+
+// IndustryDetail 同花顺行业板块详情页数据
+func (a *App) IndustryDetail(industryCode string) *models.ConceptDetailInfo {
+	return data.NewMarketNewsApi().IndustryDetail(industryCode)
+}
+
+// IndustryKLine 同花顺行业板块 K 线数据
+func (a *App) IndustryKLine(plateCode string) *models.ConceptKLineData {
+	return data.NewMarketNewsApi().IndustryKLine(plateCode)
+}
+
+// IndustryRealHead 同花顺行业板块实时行情
+func (a *App) IndustryRealHead(plateCode string) *models.ConceptMarket {
+	return data.NewMarketNewsApi().IndustryRealHead(plateCode)
+}
+
+func (a *App) GetUplimitHot(date string, limit int) map[string]any {
+	return data.NewMarketNewsApi().GetUplimitHot(date, limit)
+}
+
+// RzrqRank 融资融券排名数据
+func (a *App) RzrqRank(rzrqType, sortKey, sortType, date string, length, offset int) *models.RzrqRankData {
+	return data.NewMarketNewsApi().RzrqRank(rzrqType, sortKey, sortType, date, length, offset)
+}
+
+func (a *App) RzrqTrend(rzrqType, code string) *models.RzrqTrendData {
+	return data.NewMarketNewsApi().RzrqTrend(rzrqType, code)
+}
+
+func (a *App) IsTradingTime() bool {
+	loc, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		loc = ShanghaiTimezone
+	}
+	return isTradingTime(time.Now().In(loc))
+}
+
+func (a *App) IsHKTradingTime() bool {
+	loc, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		loc = ShanghaiTimezone
+	}
+	return IsHKTradingTime(time.Now().In(loc))
+}
+
+func (a *App) IsUSTradingTime() bool {
+	return IsUSTradingTime(time.Now())
+}
+
+// IsTradingDay 判断 yyyy-MM-dd 是否为 A 股交易日（周末、法定节假日为 false）。
+func (a *App) IsTradingDay(date string) bool {
+	date = strings.TrimSpace(date)
+	if date == "" {
+		return false
+	}
+	loc, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		loc = ShanghaiTimezone
+	}
+	t, err := time.ParseInLocation("2006-01-02", date, loc)
+	if err != nil {
+		return false
+	}
+	return isTradingDay(t)
+}
+
+func (a *App) GetLatestTradingDay() string {
+	loc, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		loc = ShanghaiTimezone
+	}
+	now := time.Now().In(loc)
+	if isTradingDay(now) {
+		hour, minute, _ := now.Clock()
+		if hour < 15 || (hour == 15 && minute == 0) {
+			return now.AddDate(0, 0, -1).Format("2006-01-02")
+		}
+		return now.Format("2006-01-02")
+	}
+	for i := 1; i <= 7; i++ {
+		d := now.AddDate(0, 0, -i)
+		if isTradingDay(d) {
+			return d.Format("2006-01-02")
+		}
+	}
+	return now.Format("2006-01-02")
+}
+
+func (a *App) SearchStock(words string) map[string]any {
+	return data.NewSearchStockApi(words).SearchStock(5000)
+}
+func (a *App) GetHotStrategy() map[string]any {
+	return data.NewSearchStockApi("").HotStrategy()
+}
+
+func (a *App) GetCustomStrategyList(query models.CustomStrategyQuery) *models.CustomStrategyPageData {
+	page, err := data.NewCustomStrategyApi().GetCustomStrategyList(&query)
+	if err != nil {
+		return &models.CustomStrategyPageData{}
+	}
+	return page
+}
+
+func (a *App) GetAllCustomStrategies() *[]models.CustomStrategy {
+	return data.NewCustomStrategyApi().GetAllCustomStrategies()
+}
+
+func (a *App) SaveCustomStrategy(strategy models.CustomStrategy) string {
+	return data.NewCustomStrategyApi().SaveCustomStrategy(strategy)
+}
+
+func (a *App) DeleteCustomStrategy(id uint) string {
+	return data.NewCustomStrategyApi().DeleteCustomStrategy(id)
+}
+
+func (a *App) GetDailyOperationPlanList(query models.DailyOperationPlanQuery) *models.DailyOperationPlanPageData {
+	page, err := data.NewDailyOperationPlanApi().GetDailyOperationPlanList(&query)
+	if err != nil {
+		return &models.DailyOperationPlanPageData{}
+	}
+	return page
+}
+
+func (a *App) GetDailyOperationPlanByID(id uint) *models.DailyOperationPlan {
+	plan, err := data.NewDailyOperationPlanApi().GetDailyOperationPlanByID(id)
+	if err != nil {
+		return &models.DailyOperationPlan{}
+	}
+	return plan
+}
+
+func (a *App) SaveDailyOperationPlan(plan models.DailyOperationPlan) string {
+	return data.NewDailyOperationPlanApi().SaveDailyOperationPlan(plan)
+}
+
+func (a *App) DeleteDailyOperationPlan(id uint) string {
+	return data.NewDailyOperationPlanApi().DeleteDailyOperationPlan(id)
+}
+
+func (a *App) UpdateDailyOperationPlanStatus(id uint, status string) string {
+	if err := data.NewDailyOperationPlanApi().UpdateDailyOperationPlanStatus(id, status); err != nil {
+		return "更新失败:" + err.Error()
+	}
+	return "更新成功"
+}
+
+// UpdateDailyOperationPlanAlert 快速切换操作计划的盘中预警开关
+func (a *App) UpdateDailyOperationPlanAlert(id uint, enableAlert bool) string {
+	if err := data.NewDailyOperationPlanApi().UpdateDailyOperationPlanAlert(id, enableAlert); err != nil {
+		return "更新失败:" + err.Error()
+	}
+	return "更新成功"
+}
+
+func (a *App) GetAllStocks(page int, pageSize int, name string, technicalIndicators models.TechnicalIndicators) *models.AllStocksResp {
+	return data.NewStockDataApi().GetAllStocks(page, pageSize, name, technicalIndicators)
+}
+
+func (a *App) ChatWithAgent(question string, aiConfigId int, sysPromptId *int, memoryMode bool, memoryCount int, thinkingMode bool, agentMode string, sessionId string, skillDirName string, imagesJSON string) {
+	defer func() {
+		if r := recover(); r != nil {
+			logger.SugaredLogger.Errorf("ChatWithAgent panic: %v", r)
+		}
+	}()
+
+	// 会话级取消：以 sessionId 为 key 注册，仅取消同一会话的上一个 run；
+	// 不同会话互不取消，从而支持多会话并行运行（悬浮助手可同时开多个会话）。
+	ctx, cancel := context.WithCancel(context.Background())
+	run := &agentRunSession{cancel: cancel}
+	a.agentMu.Lock()
+	if prev := a.agentSessions[sessionId]; prev != nil {
+		prev.cancel()
+	}
+	a.agentSessions[sessionId] = run
+	a.agentMu.Unlock()
+
+	// 仅当自己仍是该 sessionId 的当前 run 时才清空，避免误清后来新起的 run
+	defer func() {
+		a.agentMu.Lock()
+		if a.agentSessions[sessionId] == run {
+			delete(a.agentSessions, sessionId)
+		}
+		a.agentMu.Unlock()
+	}()
+
+	// emit 在消息载荷上附加 sessionId，供前端按会话路由（多会话并行的关键）；
+	// agent-DONE 哨兵同样带 sessionId，前端据此判定对应会话本轮结束。
+	emit := func(msg *schema.Message) {
+		m := agentMessageToFrontendMap(msg)
+		m["sessionId"] = sessionId
+		runtime.EventsEmit(a.ctx, "agent-message", m)
+	}
+
+	// 技能选择（支持逗号分隔多选）：用户选定技能后构建
+	//   - SysPromptOverride：技能全文 + 激活纪律（强制主 Agent 应用方法论并在委派时传播）
+	//   - SkillQuestionBlock：随用户消息提交的激活块，经 task 委派描述触达子 Agent
+	//   - ImagesJSON：当前提问携带的图片列表 JSON（http(s) 外链或 base64 data URL），
+	//     仅视觉模型生效，参考 https://api-docs.deepseek.com/zh-cn/guides/vision/
+	// 并将 SysPromptID 置空以彻底忽略用户选择的系统提示词。
+	// SessionIDOverride 使记忆按前端会话隔离：新对话生成新 sessionId，切换模型保持同一 sessionId。
+	// 前端同时会把已选技能名以 @技能名 形式拼入提问文本一起提交。
+	effectiveSysPromptId := sysPromptId
+	skillPromptOverride := ""
+	skillQuestionBlock := ""
+	if strings.TrimSpace(skillDirName) != "" {
+		skillPromptOverride, skillQuestionBlock = buildSkillContext(skillDirName)
+		if skillPromptOverride == "" {
+			logger.SugaredLogger.Warnf("ChatWithAgent: 技能 %q 全部加载失败，回退到默认系统提示词", skillDirName)
+		} else {
+			effectiveSysPromptId = nil
+		}
+	}
+	ch := agent.NewStockAiAgentApi().ChatWithContext(ctx, agent.ChatRequest{
+		Question:           question,
+		AIConfigID:         aiConfigId,
+		SysPromptID:        effectiveSysPromptId,
+		MemoryMode:         memoryMode,
+		MemoryCount:        memoryCount,
+		ThinkingMode:       thinkingMode,
+		AgentMode:          agentMode,
+		SysPromptOverride:  skillPromptOverride,
+		SessionIDOverride:  sessionId,
+		SkillQuestionBlock: skillQuestionBlock,
+		ImagesJSON:         strings.TrimSpace(imagesJSON),
+		SkillDirName:       strings.TrimSpace(skillDirName),
+	})
+	for msg := range ch {
+		emit(msg)
+	}
+	emit(&schema.Message{
+		Role:    schema.Assistant,
+		Content: "agent-DONE",
+	})
+}
+
+// ChatWithAgentKBQA 「知识库问答」专用 Agent 调用。
+//
+// 与 ChatWithAgent 的区别：
+//   - 将前端已检索到的统一命中片段（hitsJSON）注入为系统提示词（sysPromptOverride），
+//     引导 Agent 基于这些知识库内容综合回答，避免重复调用知识库检索工具
+//   - 不带历史记忆（memoryMode=false），每次问答独立
+//   - 流式输出在独立事件 "kb-qa-message" 上，避免与主聊天 "agent-message" 冲突
+//   - 以保留 key（agentRunKeyKBQA）注册取消句柄，与悬浮助手各会话并行互不干扰
+//
+// 参数：
+//   - question: 用户问题（原样作为 user message）
+//   - aiConfigId: AI 服务 ID
+//   - agentMode: Agent 模式（""=默认, react/plan_execute/deepagents）
+//   - hitsJSON: 前端 SearchAllKnowledge 返回结果的 JSON 字符串（[]UnifiedKnowledgeHit）
+//
+// 前端可通过 AbortChatWithAgent（全停）或 AbortChatWithAgentBySession(agentRunKeyKBQA) 中止。
+func (a *App) ChatWithAgentKBQA(question string, aiConfigId int, agentMode, hitsJSON string) {
+	defer func() {
+		if r := recover(); r != nil {
+			logger.SugaredLogger.Errorf("ChatWithAgentKBQA panic: %v", r)
+			runtime.EventsEmit(a.ctx, "kb-qa-message", agentMessageToFrontendMap(&schema.Message{
+				Role:    schema.Assistant,
+				Content: fmt.Sprintf("❌ 知识库问答异常: %v", r),
+			}))
+			runtime.EventsEmit(a.ctx, "kb-qa-message", agentMessageToFrontendMap(&schema.Message{
+				Role:    schema.Assistant,
+				Content: "agent-DONE",
+			}))
+		}
+	}()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	run := &agentRunSession{cancel: cancel}
+	a.agentMu.Lock()
+	if prev := a.agentSessions[agentRunKeyKBQA]; prev != nil {
+		prev.cancel()
+	}
+	a.agentSessions[agentRunKeyKBQA] = run
+	a.agentMu.Unlock()
+
+	defer func() {
+		a.agentMu.Lock()
+		if a.agentSessions[agentRunKeyKBQA] == run {
+			delete(a.agentSessions, agentRunKeyKBQA)
+		}
+		a.agentMu.Unlock()
+	}()
+
+	// 解析前端传入的命中片段，构造知识库问答系统提示词
+	var hits []agent.UnifiedKnowledgeHit
+	if strings.TrimSpace(hitsJSON) != "" {
+		if err := json.Unmarshal([]byte(hitsJSON), &hits); err != nil {
+			logger.SugaredLogger.Warnf("ChatWithAgentKBQA: 解析 hitsJSON 失败，将以无上下文方式回答: %v", err)
+			hits = nil
+		}
+	}
+	sysPromptOverride := agent.BuildKBQASystemPrompt(hits)
+
+	// SysPromptID=nil（使用 override）, MemoryMode=false, ThinkingMode=false, 无会话覆盖
+	ch := agent.NewStockAiAgentApi().ChatWithContext(ctx, agent.ChatRequest{
+		Question:          question,
+		AIConfigID:        aiConfigId,
+		AgentMode:         agentMode,
+		SysPromptOverride: sysPromptOverride,
+	})
+	for msg := range ch {
+		runtime.EventsEmit(a.ctx, "kb-qa-message", agentMessageToFrontendMap(msg))
+	}
+	runtime.EventsEmit(a.ctx, "kb-qa-message", agentMessageToFrontendMap(&schema.Message{
+		Role:    schema.Assistant,
+		Content: "agent-DONE",
+	}))
+}
+
+// agentMessageToFrontendMap 用标准 JSON 将 schema.Message 转为 map 再 EventsEmit，
+// 保证与 json 标签一致（如 reasoning_content、extra），避免 Wails 直接传结构体时前端字段名不一致。
+func agentMessageToFrontendMap(msg *schema.Message) map[string]any {
+	if msg == nil {
+		return map[string]any{}
+	}
+	b, err := json.Marshal(msg)
+	if err != nil {
+		return map[string]any{
+			"role":              string(msg.Role),
+			"content":           msg.Content,
+			"reasoning_content": msg.ReasoningContent,
+		}
+	}
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		return map[string]any{
+			"role":              string(msg.Role),
+			"content":           msg.Content,
+			"reasoning_content": msg.ReasoningContent,
+		}
+	}
+	return m
+}
+
+// agentRunKeyKBQA 是知识库问答在会话取消注册表中的保留 key，
+// 避免与悬浮助手的时间戳会话 ID 冲突。
+const agentRunKeyKBQA = "__kbqa__"
+
+// AbortChatWithAgentBySession 仅取消指定会话正在进行的 Agent 运行（多会话并行下的会话级中断）。
+func (a *App) AbortChatWithAgentBySession(sessionId string) {
+	a.agentMu.Lock()
+	defer a.agentMu.Unlock()
+	if run := a.agentSessions[sessionId]; run != nil {
+		run.cancel()
+		delete(a.agentSessions, sessionId)
+	}
+}
+
+// AbortChatWithAgent 取消全部正在进行的 Agent 运行（含知识库问答），保持“全停”语义。
+func (a *App) AbortChatWithAgent() {
+	a.agentMu.Lock()
+	defer a.agentMu.Unlock()
+	for key, run := range a.agentSessions {
+		run.cancel()
+		delete(a.agentSessions, key)
+	}
+}
+
+func (a *App) AnalyzeSentimentWithFreqWeight(text string) map[string]any {
+	result, cleanFrequencies := data.NewsAnalyze(text, false)
+	return map[string]any{
+		"result":      result,
+		"frequencies": cleanFrequencies,
+	}
+}
+
+func (a *App) GetAIResponseResultList(query models.AIResponseResultQuery) *models.AIResponseResultPageData {
+	page, err := data.NewAIResponseResultService().GetAIResponseResultList(query)
+	if err != nil {
+		return &models.AIResponseResultPageData{}
+	}
+	return page
+}
+func (a *App) DeleteAIResponseResult(id uint) string {
+	err := data.NewAIResponseResultService().DeleteAIResponseResult(id)
+	if err != nil {
+		return "删除失败"
+	}
+	return "删除成功"
+}
+func (a *App) BatchDeleteAIResponseResult(ids []uint) string {
+	err := data.NewAIResponseResultService().BatchDeleteAIResponseResult(ids)
+	if err != nil {
+		return "删除失败"
+	}
+	return "删除成功"
+}
+
+func (a *App) GetStockChanges(changeTypes []int, pageIndex, pageSize int) *data.StockChangesResponse {
+	return data.NewStockChangesApi().GetStockChanges(changeTypes, pageIndex, pageSize)
+}
+
+func (a *App) GetAllStockChangesWithPaging(pageSize int) *data.StockChangesResponse {
+	all := data.NewStockChangesApi().GetAllStockChangesWithPaging(pageSize)
+	historyService := data.NewStockChangeHistoryService()
+	_, _ = historyService.SaveStockChangesWithDedup(all.Data)
+	return all
+}
+
+func (a *App) GetStockChangeHistory(query models.StockChangeHistoryQuery) *models.StockChangeHistoryPageData {
+	result, err := data.NewStockChangeHistoryService().GetHistoryList(query)
+	if err != nil {
+		return &models.StockChangeHistoryPageData{}
+	}
+	return result
+}
+
+func (a *App) SaveStockChangesToHistory(changeTypes []int) string {
+	api := data.NewStockChangesApi()
+	result := api.GetStockChanges(changeTypes, 0, 500)
+	if result == nil || len(result.Data) == 0 {
+		return "没有获取到异动数据"
+	}
+
+	err := data.NewStockChangeHistoryService().SaveStockChanges(result.Data)
+	if err != nil {
+		return "保存失败: " + err.Error()
+	}
+	return fmt.Sprintf("成功保存 %d 条异动数据", len(result.Data))
+}
+
+func (a *App) DeleteStockChangeHistory(days int) string {
+	err := data.NewStockChangeHistoryService().DeleteOldData(days)
+	if err != nil {
+		return "删除失败: " + err.Error()
+	}
+	return fmt.Sprintf("已删除 %d 天前的历史数据", days)
+}
+
+func (a *App) GetDailyChangeStats(days int) []data.DailyChangeStats {
+	result, err := data.NewStockChangeHistoryService().GetDailyChangeStats(days)
+	if err != nil {
+		return []data.DailyChangeStats{}
+	}
+	return result
+}
+
+func (a *App) GetChangeTypeDailyStats(days int) []data.ChangeTypeDailyStats {
+	result, err := data.NewStockChangeHistoryService().GetChangeTypeDailyStats(days)
+	if err != nil {
+		return []data.ChangeTypeDailyStats{}
+	}
+	return result
+}
+
+func (a *App) GetChangeRank(days int, topN int) *data.ChangeRankResult {
+	result, err := data.NewStockChangeHistoryService().GetChangeRank(days, topN)
+	if err != nil {
+		return &data.ChangeRankResult{}
+	}
+	return result
+}
+
+func (a *App) GetDailyDimensionStats(dimension string, name string, days int) []data.DailyDimensionStats {
+	result, err := data.NewStockChangeHistoryService().GetDailyDimensionStats(dimension, name, days)
+	if err != nil {
+		return []data.DailyDimensionStats{}
+	}
+	return result
+}
+
+func (a *App) GetTypeStatsByDate(date string) []data.TypeCountStats {
+	result, err := data.NewStockChangeHistoryService().GetTypeStatsByDate(date)
+	if err != nil {
+		return []data.TypeCountStats{}
+	}
+	return result
+}
+
+func (a *App) GetAiRecommendStocksList(query models.AiRecommendStocksQuery) *models.AiRecommendStocksPageData {
+	page, err := data.NewAiRecommendStocksService().GetAiRecommendStocksList(&query)
+	if err != nil {
+		return &models.AiRecommendStocksPageData{}
+	}
+	return page
+}
+func (a *App) GetAiRecommendStocksTodayStats(date string, days int) *models.AiRecommendStocksTodayStatsData {
+	stats, err := data.NewAiRecommendStocksService().GetAiRecommendStocksTodayStats(date, days)
+	if err != nil {
+		return &models.AiRecommendStocksTodayStatsData{}
+	}
+	return stats
+}
+func (a *App) DeleteAiRecommendStocks(id uint) string {
+	err := data.NewAiRecommendStocksService().DeleteAiRecommendStocks(id)
+	if err != nil {
+		return "删除失败"
+	}
+	return "删除成功"
+}
+
+func (a *App) UpdateAiRecommendStocksAlert(id uint, enableAlert bool) string {
+	err := data.NewAiRecommendStocksService().UpdateAiRecommendStocksAlert(id, enableAlert)
+	if err != nil {
+		return "更新预警状态失败"
+	}
+	return "更新预警状态成功"
+}
+
+func (a *App) GetPromptTemplateList(query models.PromptTemplateQuery) *models.PromptTemplatePageData {
+	page, err := data.NewPromptTemplateApi().GetPromptTemplateList(&query)
+	if err != nil {
+		return &models.PromptTemplatePageData{}
+	}
+	return page
+}
+
+func (a *App) AddPromptTemplate(template models.PromptTemplate) string {
+	return data.NewPromptTemplateApi().AddPrompt(template)
+}
+
+func (a *App) UpdatePromptTemplate(template models.PromptTemplate) string {
+	return data.NewPromptTemplateApi().AddPrompt(template)
+}
+
+func (a *App) DeletePromptTemplate(id uint) string {
+	return data.NewPromptTemplateApi().DelPrompt(id)
+}
+
+func (a *App) GetAllStockInfoList(query data.AllStockInfoQuery) *data.AllStockInfoPageData {
+	page, err := data.NewStockDataApi().GetAllStockInfoList(&query)
+	if err != nil {
+		return &data.AllStockInfoPageData{}
+	}
+	return page
+}
+
+func (a *App) GetAllStockInfoById(id uint) *models.AllStockInfo {
+	stock, err := data.NewStockDataApi().GetAllStockInfoById(id)
+	if err != nil {
+		return &models.AllStockInfo{}
+	}
+	return stock
+}
+
+func (a *App) AddAllStockInfo(stock models.AllStockInfo) string {
+	err := data.NewStockDataApi().AddAllStockInfo(stock)
+	if err != nil {
+		return "操作失败: " + err.Error()
+	}
+	return "操作成功"
+}
+
+func (a *App) DeleteAllStockInfo(id uint) string {
+	err := data.NewStockDataApi().DeleteAllStockInfo(id)
+	if err != nil {
+		return "删除失败: " + err.Error()
+	}
+	return "删除成功"
+}
+
+func (a *App) BatchDeleteAllStockInfo(ids []uint) string {
+	err := data.NewStockDataApi().BatchDeleteAllStockInfo(ids)
+	if err != nil {
+		return "批量删除失败: " + err.Error()
+	}
+	return "批量删除成功"
+}
+
+func (a *App) GetAllMarkets() []string {
+	markets, err := data.NewStockDataApi().GetAllMarkets()
+	if err != nil {
+		return []string{}
+	}
+	return markets
+}
+
+func (a *App) GetAllIndustries() []string {
+	industries, err := data.NewStockDataApi().GetAllIndustries()
+	if err != nil {
+		return []string{}
+	}
+	return industries
+}
+
+func (a *App) GetAllConcepts() []string {
+	concepts, err := data.NewStockDataApi().GetAllConcepts()
+	if err != nil {
+		return []string{}
+	}
+	return concepts
+}
+
+func (a *App) GetStockRealTimePrice(stockCode string) map[string]any {
+	stockDatas, err := data.NewStockDataApi().GetStockCodeRealTimeData(stockCode)
+	if err != nil || stockDatas == nil || len(*stockDatas) == 0 {
+		return map[string]any{
+			"code":    -1,
+			"message": "获取股票价格失败",
+			"price":   0,
+		}
+	}
+	stock := (*stockDatas)[0]
+	price, _ := convertor.ToFloat(stock.Price)
+	if price == 0 {
+		price, _ = convertor.ToFloat(stock.A1P)
+	}
+	if price == 0 {
+		price, _ = convertor.ToFloat(stock.B1P)
+	}
+	if price == 0 {
+		price, _ = convertor.ToFloat(stock.PreClose)
+	}
+	preClose, _ := convertor.ToFloat(stock.PreClose)
+	changePercent := 0.0
+	if preClose > 0 {
+		changePercent = (price - preClose) / preClose * 100
+	}
+	return map[string]any{
+		"code":          0,
+		"message":       "success",
+		"price":         price,
+		"name":          stock.Name,
+		"preClose":      preClose,
+		"changePercent": changePercent,
+	}
+}
+
+// GetBKFundFlowList 获取板块资金流向历史数据（折线图用）
+func (a *App) GetBKFundFlowList(code string, limit int) []models.BKFundFlowPoint {
+	return data.NewBKFundFlowApi().GetBKFundFlowList(code, limit)
+}
+
+// GetBKFundFlowListByDate 获取板块指定日期的资金流向历史数据
+func (a *App) GetBKFundFlowListByDate(code string, date string) []models.BKFundFlowPoint {
+	return data.NewBKFundFlowApi().GetBKFundFlowListByDate(code, date)
+}
+
+// GetBKFundFlowTopList 获取最新板块资金排名
+func (a *App) GetBKFundFlowTopList(topN int) []models.BKFundFlow {
+	return data.NewBKFundFlowApi().GetBKFundFlowTopList(topN)
+}
+
+// GetBKFundFlowTopListByDate 获取指定日期的板块资金排名
+func (a *App) GetBKFundFlowTopListByDate(date string, topN int) []models.BKFundFlow {
+	return data.NewBKFundFlowApi().GetBKFundFlowTopListByDate(date, topN)
+}
+
+// GetAllBKCodes 获取所有已记录的板块代码
+func (a *App) GetAllBKCodes() []map[string]string {
+	return data.NewBKFundFlowApi().GetAllBKCodes()
+}
+
+// GetConceptFundFlowList 获取概念资金流向历史数据（折线图用）
+func (a *App) GetConceptFundFlowList(code string, limit int) []models.ConceptFundFlowPoint {
+	return data.NewConceptFundFlowApi().GetConceptFundFlowList(code, limit)
+}
+
+// GetConceptFundFlowListByDate 获取概念指定日期的资金流向历史数据
+func (a *App) GetConceptFundFlowListByDate(code string, date string) []models.ConceptFundFlowPoint {
+	return data.NewConceptFundFlowApi().GetConceptFundFlowListByDate(code, date)
+}
+
+// GetConceptFundFlowTopList 获取最新概念资金排名
+func (a *App) GetConceptFundFlowTopList(topN int) []models.ConceptFundFlow {
+	return data.NewConceptFundFlowApi().GetConceptFundFlowTopList(topN)
+}
+
+// GetConceptFundFlowTopListByDate 获取指定日期的概念资金排名
+func (a *App) GetConceptFundFlowTopListByDate(date string, topN int) []models.ConceptFundFlow {
+	return data.NewConceptFundFlowApi().GetConceptFundFlowTopListByDate(date, topN)
+}
+
+// GetAllConceptCodes 获取所有概念代码
+func (a *App) GetAllConceptCodes() []map[string]string {
+	return data.NewConceptFundFlowApi().GetAllConceptCodes()
+}
+
+// GetBKConstituentStocks 获取板块/概念的成分股实时行情（按主力净流入降序）
+func (a *App) GetBKConstituentStocks(bkCode string) []models.BKConstituentStock {
+	return data.NewBKConstituentsApi().GetBKConstituentStocks(bkCode)
+}
