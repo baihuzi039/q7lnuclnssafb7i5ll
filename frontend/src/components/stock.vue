@@ -2922,9 +2922,9 @@ async function showLightweightKline(code, name) {
     currentStockTradingPrice.value.stopLossPrice = 0
   }
 
-  await refreshEffectiveVip()
-  // 检查 VIP 权限：有效期内 VIP2 及以上（与 AI 助手 Web 端校验一致）
-  if (vipLevel.value < 2) {
+  // [local-patch] 解锁多周期K线：跳过VIP校验
+  // await refreshEffectiveVip()
+  if (false) {
     message.warning('多周期 K 线仅限 VIP2 及以上用户使用，您当前权限不足，将在 10 秒后自动关闭')
     lwKlineCode.value = em
     lwKlineName.value = name || ''

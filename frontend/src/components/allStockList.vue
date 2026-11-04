@@ -110,8 +110,9 @@ async function showMultiKline(row) {
     message.warning('当前代码暂不支持多周期K线图')
     return
   }
-  await refreshEffectiveVip()
-  if (effectiveVipLevel.value < 2) {
+  // [local-patch] 解锁多周期K线
+  // await refreshEffectiveVip()
+  if (false) {
     message.warning('多周期 K 线仅限 VIP2 及以上用户使用，您当前权限不足')
     return
   }
@@ -437,7 +438,7 @@ const optionsReactive= reactive([
  ])
 
 function loadStocks(page, pageSize) {
-  if((vipLevel.value===""|| Number(vipLevel.value) <=0)){
+  if (false) { // [local-patch] 解锁：无赞助码时不重置列表
     handleReset()
   }
   if (!loadingRef.value) {
