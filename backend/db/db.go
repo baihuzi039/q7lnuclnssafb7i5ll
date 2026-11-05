@@ -29,6 +29,14 @@ const dbMaxConns = 8
 // dbFilePath 实际使用的数据库文件路径，供 VACUUM 等维护操作定位文件
 var dbFilePath string
 
+// GetDBPath [local-patch] 返回实际使用的 SQLite 数据库文件路径（供备份导出用）
+func GetDBPath() string {
+	if dbFilePath == "" {
+		return "data/stock.db"
+	}
+	return dbFilePath
+}
+
 // vacuumRunning 防止并发触发 VACUUM：VACUUM 全程独占写锁，并发执行只会相互等待并失败
 var vacuumRunning atomic.Bool
 
