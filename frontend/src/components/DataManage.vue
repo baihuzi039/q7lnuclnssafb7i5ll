@@ -12,6 +12,12 @@
           <n-statistic label="上次同步">
             <template #default>{{ status.lastSyncTime || '本次运行尚未同步' }}</template>
           </n-statistic>
+          <n-statistic label="竞价记录">
+            <template #default>{{ auctionStat.rows || 0 }} 条 / {{ auctionStat.days || 0 }} 天</template>
+          </n-statistic>
+          <n-statistic label="竞价最新日">
+            <template #default>{{ auctionStat.latest || '-' }}</template>
+          </n-statistic>
         </n-space>
         <n-space>
           <n-button size="small" type="primary" ghost :loading="status.running" @click="syncNow">
@@ -20,6 +26,10 @@
           <n-button size="small" type="success" ghost :loading="importing" @click="pickImport">
             {{ importing ? '导入中...' : '导入通达信数据包' }}
           </n-button>
+          <n-button size="small" type="info" ghost :loading="importingAuction" @click="pickAuctionImport">
+            {{ importingAuction ? '导入中...' : '导入竞价CSV' }}
+          </n-button>
+          <n-button size="small" type="info" ghost @click="snapAuction">抓今日竞价快照</n-button>
           <n-button size="small" type="warning" ghost @click="exportBackup">导出数据库备份</n-button>
           <n-button size="small" @click="loadStatus">刷新状态</n-button>
         </n-space>
@@ -60,7 +70,7 @@
 
 <script setup>
 import {computed, h, onBeforeUnmount, onMounted, ref} from 'vue'
-import {GetDailyKLineSyncStatus, GetLocalDailyKLine, SyncDailyKLineNow, ImportTdxDayFolder, ExportDatabaseBackup, ExportDataCSV}
+import {GetDailyKLineSyncStatus, GetLocalDailyKLine, SyncDailyKLineNow, ImportTdxDayFolder, ExportDatabaseBackup, ExportDataCSV, ImportAuctionCSV, SnapshotAuctionNow, GetAuctionCount}
   from '../../wailsjs/go/main/App'
 import {EventsOn, EventsOff} from '../../wailsjs/runtime'
 import {SelectDirectory} from '../../wailsjs/go/main/App'
@@ -128,6 +138,31 @@ function exportBackup() {
   })
 }
 
+const importingAuction = ref(false)
+const auctionStat = ref({})
+function pickAuctionImport() {
+  // 复用目录选择：竞价CSV通常在一个文件夹里，逐个文件选也可
+  SelectDirectory().then((dir) => {
+    if (!dir) return
+    importingAuction.value = true
+    if (window.$message) window.$message.info('开始导入竞价数据')
+    // 后端 ImportAuctionCSV 支持目录：目录会逐个读，非csv会报错跳过；传目录让后端递归
+    ImportAuctionCSV([dir]).then((res) => {
+      importingAuction.value = false
+      if (window.$message) window.$message.success(res)
+      loadAuctionStat()
+    }).catch(() => { importingAuction.value = false })
+  })
+}
+function snapAuction() {
+  SnapshotAuctionNow().then((res) => {
+    if (window.$message) window.$message.info(res)
+  })
+}
+function loadAuctionStat() {
+  GetAuctionCount().then((res) => { auctionStat.value = res })
+}
+
 const importing = ref(false)
 function pickImport() {
   SelectDirectory().then((dir) => {
@@ -153,7 +188,10 @@ function queryKLine() {
 
 onMounted(() => {
   loadStatus()
+  loadAuctionStat()
   EventsOn('dailyKLineSyncDone', () => { loadStatus() })
+  EventsOn('auctionImportDone', () => { loadAuctionStat() })
+  EventsOn('auctionSnapshotDone', () => { loadAuctionStat() })
 })
 onBeforeUnmount(() => { EventsOff('dailyKLineSyncDone') })
 </script>

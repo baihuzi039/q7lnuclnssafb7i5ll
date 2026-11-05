@@ -1209,6 +1209,22 @@ func (a *App) domReady(ctx context.Context) {
 		a.cron.AddFunc("0 40 17 * * 1-5", func() {
 			go syncDailyKLineJob(a.ctx)
 		})
+		// [local-patch] 集合竞价快照：交易日 9:26 自动抓（竞价撮合完成时刻，错过即失）
+		a.cron.AddFunc("0 26 9 * * 1-5", func() {
+			go a.SnapshotAuctionNow()
+		})
+		// 启动时若当天 9:26 已过且未抓，则补抓一次（盘中数据仍可用）
+		go func() {
+			now := time.Now()
+			if now.Weekday() != time.Saturday && now.Weekday() != time.Sunday && now.Hour() >= 9 {
+				var cnt int64
+				db.Dao.Model(&models.DailyAuction{}).Where("trade_date = ?", now.Format("2006-01-02")).Count(&cnt)
+				if cnt == 0 {
+					time.Sleep(3 * time.Minute)
+					a.SnapshotAuctionNow()
+				}
+			}
+		}()
 		// 启动后 2 分钟补跑一次（增量，已同步的股票会自动跳过；夜间启动也能补上当天数据）
 		go func() {
 			time.Sleep(2 * time.Minute)
