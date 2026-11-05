@@ -15,12 +15,8 @@
         </n-space>
         <n-space>
           <n-button size="small" type="primary" ghost :loading="status.running" @click="syncNow">
-            {{ status.running ? '同步中...' : '接口同步增量' }}
+            {{ status.running ? '同步中...' : '立即同步日线' }}
           </n-button>
-          <n-button size="small" type="success" ghost :loading="importing" @click="pickImport">
-            {{ importing ? '导入中...' : '导入通达信数据包' }}
-          </n-button>
-          <n-button size="small" type="warning" ghost @click="exportBackup">导出数据库备份</n-button>
           <n-button size="small" @click="loadStatus">刷新状态</n-button>
         </n-space>
         <n-text depth="3" style="font-size: 12px;">
@@ -29,20 +25,6 @@
         </n-text>
         <n-progress v-if="status.totalStocks > 0" type="line"
                     :percentage="syncPercent" indicator-placement="inside" processing />
-      </n-space>
-    </n-card>
-
-    <n-card title="分类导出 CSV" size="small" style="margin-bottom: 10px;">
-      <n-space vertical size="medium">
-        <n-space>
-          <n-select v-model:value="expType" size="small" style="width: 160px;" :options="expTypeOptions" />
-          <n-input v-model:value="expCode" size="small" placeholder="股票代码（空=全部）" style="width: 180px;" />
-          <n-date-picker v-model:value="expRange" size="small" type="daterange" clearable />
-          <n-button size="small" type="primary" ghost :loading="exporting" @click="doExport">导出 CSV</n-button>
-        </n-space>
-        <n-text depth="3" style="font-size: 12px;">
-          日线支持按股票+日期区间筛选；导出的 CSV 可直接发灵犀做深度分析。整库备份请用上方「导出数据库备份」。
-        </n-text>
       </n-space>
     </n-card>
 
@@ -60,10 +42,9 @@
 
 <script setup>
 import {computed, h, onBeforeUnmount, onMounted, ref} from 'vue'
-import {GetDailyKLineSyncStatus, GetLocalDailyKLine, SyncDailyKLineNow, ImportTdxDayFolder, ExportDatabaseBackup, ExportDataCSV}
+import {GetDailyKLineSyncStatus, GetLocalDailyKLine, SyncDailyKLineNow}
   from '../../wailsjs/go/main/App'
 import {EventsOn, EventsOff} from '../../wailsjs/runtime'
-import {SelectDirectory} from '../../wailsjs/go/main/App'
 
 const status = ref({})
 const queryCode = ref('')
@@ -91,55 +72,6 @@ function loadStatus() {
 function syncNow() {
   status.value.running = true
   SyncDailyKLineNow().then((res) => { if (window.$message) window.$message.info(res) })
-}
-
-const exporting = ref(false)
-const expType = ref('daily')
-const expCode = ref('')
-const expRange = ref(null)
-const expTypeOptions = [
-  {label: '日线数据', value: 'daily'},
-  {label: '竞价数据', value: 'auction'},
-  {label: '自选股', value: 'follow'},
-  {label: 'AI推荐记录', value: 'recommend'},
-  {label: '回测结果', value: 'backtest'},
-]
-function fmtDay(ts) {
-  const d = new Date(ts)
-  return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0')
-}
-function doExport() {
-  exporting.value = true
-  const req = {
-    dataType: expType.value,
-    stockCode: (expCode.value || '').trim(),
-    startDate: expRange.value ? fmtDay(expRange.value[0]) : '',
-    endDate: expRange.value ? fmtDay(expRange.value[1]) : '',
-  }
-  ExportDataCSV(req).then((res) => {
-    exporting.value = false
-    if (res) { if (window.$message) window.$message.info(res) }
-  }).catch(() => { exporting.value = false })
-}
-
-function exportBackup() {
-  ExportDatabaseBackup().then((res) => {
-    if (res) { if (window.$message) window.$message.success(res) }
-  })
-}
-
-const importing = ref(false)
-function pickImport() {
-  SelectDirectory().then((dir) => {
-    if (!dir) return
-    importing.value = true
-    if (window.$message) window.$message.info('开始导入通达信日线数据，请勿关闭软件')
-    ImportTdxDayFolder([dir]).then((res) => {
-      importing.value = false
-      if (window.$message) window.$message.success(res)
-      loadStatus()
-    }).catch(() => { importing.value = false })
-  })
 }
 
 function queryKLine() {

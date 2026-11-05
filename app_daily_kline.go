@@ -5,11 +5,7 @@ package main
 
 import (
 	"context"
-	"encoding/csv"
 	"fmt"
-	"io"
-	"os"
-	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -147,59 +143,6 @@ func toF(s string) float64 {
 
 // ===== 以下为前端可调用的 Wails 绑定方法 =====
 
-// ExportDatabaseBackup 导出 stock.db 备份到指定文件夹（WAL 收拢后整文件拷贝，不中断服务）
-func (a *App) ExportDatabaseBackup() string {
-	defer PanicHandler()
-	dir, err := runtime.OpenDirectoryDialog(a.ctx, "选择备份保存位置", "")
-	if err != nil || dir == "" {
-		return ""
-	}
-	dbPath := db.GetDBPath()
-	if _, err := os.Stat(dbPath); err != nil {
-		return "数据库文件不存在: " + dbPath
-	}
-	// 先执行 checkpoint 把 WAL 内容并回主库，保证拷出的单文件是完整的
-	if err := db.Dao.Exec("PRAGMA wal_checkpoint(TRUNCATE)").Error; err != nil {
-		logger.SugaredLogger.Errorf("WAL checkpoint 失败: %s", err.Error())
-	}
-	stamp := time.Now().Format("20060102_150405")
-	dest := filepath.Join(dir, fmt.Sprintf("stock_backup_%s.db", stamp))
-	src, err := os.Open(dbPath)
-	if err != nil {
-		return "打开数据库失败: " + err.Error()
-	}
-	defer src.Close()
-	dst, err := os.Create(dest)
-	if err != nil {
-		return "创建备份文件失败: " + err.Error()
-	}
-	defer dst.Close()
-	if _, err := io.Copy(dst, src); err != nil {
-		return "备份写入失败: " + err.Error()
-	}
-	msg := fmt.Sprintf("备份完成: %s (%.1f MB)", dest, float64(fileSize(dest))/1024/1024)
-	logger.SugaredLogger.Infof("%s", msg)
-	return msg
-}
-
-func fileSize(p string) int64 {
-	st, err := os.Stat(p)
-	if err != nil {
-		return 0
-	}
-	return st.Size()
-}
-
-// SelectDirectory 弹出系统文件夹选择框
-func (a *App) SelectDirectory() string {
-	defer PanicHandler()
-	dir, err := runtime.OpenDirectoryDialog(a.ctx, "选择通达信日线数据文件夹（内含 .day 文件）", "")
-	if err != nil || dir == "" {
-		return ""
-	}
-	return dir
-}
-
 // SyncDailyKLineNow 手动触发一次全市场日线同步（异步执行，立即返回提示）
 func (a *App) SyncDailyKLineNow() string {
 	if !klineSyncRunning.CompareAndSwap(false, true) {
@@ -247,115 +190,4 @@ func (a *App) GetLocalDailyKLine(stockCode string, days int) *[]models.DailyKLin
 		rows[i], rows[j] = rows[j], rows[i]
 	}
 	return &rows
-}
-
-// [local-patch] ===== 分类导出 CSV =====
-
-// ExportReq 导出请求参数
-type ExportReq struct {
-	DataType  string `json:"dataType"`  // daily/auction/follow/recommend/backtest
-	StockCode string `json:"stockCode"` // 空=全部
-	StartDate string `json:"startDate"` // 2006-01-02，空=不限
-	EndDate   string `json:"endDate"`   // 2006-01-02，空=不限
-}
-
-// ExportDataCSV 按类别导出 CSV 到用户选择的文件夹
-func (a *App) ExportDataCSV(req ExportReq) string {
-	defer PanicHandler()
-	dir, err := runtime.OpenDirectoryDialog(a.ctx, "选择导出保存位置", "")
-	if err != nil || dir == "" {
-		return ""
-	}
-	var header []string
-	var rows [][]string
-	switch req.DataType {
-	case "daily":
-		header = []string{"stock_code", "stock_name", "day", "open", "close", "high", "low", "volume", "amount", "pct_change", "turnover"}
-		q := db.Dao.Model(&models.DailyKLine{})
-		if req.StockCode != "" {
-			q = q.Where("stock_code = ?", req.StockCode)
-		}
-		if req.StartDate != "" {
-			q = q.Where("day >= ?", req.StartDate)
-		}
-		if req.EndDate != "" {
-			q = q.Where("day <= ?", req.EndDate)
-		}
-		var list []models.DailyKLine
-		if err := q.Order("stock_code, day").Limit(3000000).Find(&list).Error; err != nil {
-			return "查询失败: " + err.Error()
-		}
-		for _, r := range list {
-			rows = append(rows, []string{r.StockCode, r.StockName, r.Day,
-				fmt.Sprintf("%g", r.Open), fmt.Sprintf("%g", r.Close), fmt.Sprintf("%g", r.High),
-				fmt.Sprintf("%g", r.Low), fmt.Sprintf("%g", r.Volume), fmt.Sprintf("%g", r.Amount),
-				fmt.Sprintf("%g", r.PctChange), fmt.Sprintf("%g", r.Turnover)})
-		}
-	case "auction":
-		return "竞价数据尚未入库（后续版本可用）"
-	case "follow":
-		header = []string{"stock_code", "stock_name", "cost_price", "created_at"}
-		var list []data.FollowedStock
-		if err := db.Dao.Find(&list).Error; err != nil {
-			return "查询失败: " + err.Error()
-		}
-		for _, r := range list {
-			rows = append(rows, []string{r.StockCode, r.Name, fmt.Sprintf("%g", r.CostPrice), r.Time.Format("2006-01-02 15:04:05")})
-		}
-	case "recommend":
-		header = []string{"stock_code", "stock_name", "rating", "price", "recommend_time"}
-		var list []models.AiRecommendStocks
-		if err := db.Dao.Find(&list).Error; err != nil {
-			return "查询失败: " + err.Error()
-		}
-		for _, r := range list {
-			t := ""
-			if r.DataTime != nil {
-				t = r.DataTime.Format("2006-01-02 15:04:05")
-			}
-			rows = append(rows, []string{r.StockCode, r.StockName, r.Rating, r.StockPrice, t})
-		}
-	case "backtest":
-		header = []string{"stock_code", "stock_name", "rating", "recommend_time", "recommend_price", "period_days", "return_pct", "benchmark_pct", "excess_pct", "outcome"}
-		var list []models.AiRecommendBacktest
-		if err := db.Dao.Find(&list).Error; err != nil {
-			return "查询失败: " + err.Error()
-		}
-		for _, r := range list {
-			rows = append(rows, []string{r.StockCode, r.StockName, r.Rating,
-				r.RecommendTime.Format("2006-01-02"), fmt.Sprintf("%g", r.RecommendPrice),
-				fmt.Sprintf("%d", r.PeriodDays), fmt.Sprintf("%g", r.ReturnPct),
-				fmt.Sprintf("%g", r.BenchmarkPct), fmt.Sprintf("%g", r.ExcessPct), r.Outcome})
-		}
-	default:
-		return "未知类别: " + req.DataType
-	}
-	if len(rows) == 0 {
-		return "该条件下无数据"
-	}
-	nameMap := map[string]string{"daily": "日线", "auction": "竞价", "follow": "自选股", "recommend": "AI推荐", "backtest": "回测结果"}
-	fname := nameMap[req.DataType]
-	if req.StockCode != "" {
-		fname += "_" + req.StockCode
-	}
-	if req.StartDate != "" || req.EndDate != "" {
-		fname += "_" + req.StartDate + "_" + req.EndDate
-	}
-	fname += "_" + time.Now().Format("20060102_150405") + ".csv"
-	dest := filepath.Join(dir, fname)
-	f, err := os.Create(dest)
-	if err != nil {
-		return "创建文件失败: " + err.Error()
-	}
-	defer f.Close()
-	_, _ = f.WriteString("\xEF\xBB\xBF") // BOM: Excel 打开中文不乱码
-	w := csv.NewWriter(f)
-	_ = w.Write(header)
-	for _, r := range rows {
-		_ = w.Write(r)
-	}
-	w.Flush()
-	msg := fmt.Sprintf("导出完成: %s (%d 行)", dest, len(rows))
-	logger.SugaredLogger.Infof("%s", msg)
-	return msg
 }
