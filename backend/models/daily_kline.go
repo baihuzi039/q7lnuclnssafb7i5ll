@@ -1,10 +1,6 @@
 package models
 
-import (
-	"time"
-
-	"gorm.io/gorm"
-)
+import "gorm.io/gorm"
 
 // [local-patch] DailyKLine 本地日线历史库：供回测/选股器使用，避免每次现拉接口。
 // 由每日定时任务增量写入（17:40 工作日），也支持手动触发和外部数据包导入。
