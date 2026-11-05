@@ -1204,6 +1204,16 @@ func (a *App) domReady(ctx context.Context) {
 		a.cron.AddFunc("30 05 8,12,20 * * *", func() {
 			syncAllStockInfo(a.ctx)
 		})
+
+		// [local-patch] 本地日线历史库：工作日 17:40 收盘后自动增量同步
+		a.cron.AddFunc("0 40 17 * * 1-5", func() {
+			go syncDailyKLineJob(a.ctx)
+		})
+		// 启动后 2 分钟补跑一次（增量，已同步的股票会自动跳过；夜间启动也能补上当天数据）
+		go func() {
+			time.Sleep(2 * time.Minute)
+			syncDailyKLineJob(a.ctx)
+		}()
 	}()
 
 	//检查谷歌浏览器

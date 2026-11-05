@@ -832,6 +832,24 @@ const menuOptions = ref([
     ]
   },
   {
+        label: () =>
+            h(
+                RouterLink,
+                {
+                  to: {
+                    name: 'dataManage',
+                    params: {},
+                  },
+                  onClick: () => {
+                    activeKey.value = 'dataManage'
+                  },
+                },
+                {default: () => '数据管理'}
+            ),
+        key: 'dataManage',
+        icon: renderIcon(ServerOutline),
+      },
+  {
     label: () =>
         h(
             RouterLink,

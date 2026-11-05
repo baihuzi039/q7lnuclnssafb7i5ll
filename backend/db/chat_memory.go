@@ -71,4 +71,6 @@ func AutoMigrate() {
 	Dao.AutoMigrate(&models.PromptBacktestPick{})
 	Dao.AutoMigrate(&models.PolicyNews{})
 	Dao.AutoMigrate(&models.SignalTradeRecord{})
+	// [local-patch] 本地日线历史库（回测/选股器数据层）
+	Dao.AutoMigrate(&models.DailyKLine{})
 }
