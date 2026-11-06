@@ -822,3 +822,27 @@ export function VacuumDatabase():Promise<string>;
 export function ValidateCronExpr(arg1:string):Promise<string>;
 
 export function WriteSkillFile(arg1:string,arg2:string,arg3:string):Promise<string>;
+
+export function ListTrackStrategies(): Promise<any>;
+
+export function AddTrackStrategy(arg1): Promise<any>;
+
+export function DelTrackStrategy(arg1): Promise<any>;
+
+export function GetTrackBatches(arg1): Promise<any>;
+
+export function GetRecentTrackItems(arg1,arg2): Promise<any>;
+
+export function GetTrackStats(): Promise<any>;
+
+export function CreateTrackBatch(arg1,arg2,arg3): Promise<any>;
+
+export function ImportTrackInboxFolder(): Promise<any>;
+
+export function OpenTrackInboxDir(): Promise<any>;
+
+export function ExportTrackCSV(arg1): Promise<any>;
+
+export function DeleteTrackBatch(arg1): Promise<any>;
+
+export function DeleteTrackItem(arg1): Promise<any>;

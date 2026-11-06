@@ -73,11 +73,11 @@
 </template>
 
 <script setup>
-import {onBeforeUnmount, onMounted, ref} from 'vue'
+import {onBeforeUnmount, onMounted, ref, h} from 'vue'
 import {
   ListTrackStrategies, AddTrackStrategy, DelTrackStrategy, GetTrackBatches,
   GetRecentTrackItems, GetTrackStats, CreateTrackBatch, ImportTrackInboxFolder,
-  OpenTrackInboxDir, ExportTrackCSV, DeleteTrackBatch
+  OpenTrackInboxDir, ExportTrackCSV, DeleteTrackBatch, DeleteTrackItem
 } from '../../wailsjs/go/main/App'
 import {EventsOn, EventsOff} from '../../wailsjs/runtime'
 
@@ -121,6 +121,15 @@ const itemColumns = [
   h('6日%', 'hold6Pct', 75),
   h('7日%', 'hold7Pct', 75),
   h('8日%', 'hold8Pct', 75),
+  {
+    title: '操作', key: 'op', width: 70,
+    render(row) {
+      return h('a', {
+        style: 'color:#e88080;cursor:pointer',
+        onClick: () => delItem(row)
+      }, '删除')
+    }
+  },
 ]
 
 const pctColor = (row, key) => {
@@ -129,10 +138,14 @@ const pctColor = (row, key) => {
   return {color: v > 0 ? '#e88080' : '#63e2b7', fontWeight: 600}
 }
 
-// 上色
+// 上色（正确渲染 VNode；旧写法多包了一层函数导致函数源码被当字符串渲染成乱码）
 for (const k of ['nextOpenPct', 'nextHighPct', 'nextClosePct', 'hold1Pct', 'hold2Pct', 'hold3Pct', 'hold4Pct', 'hold5Pct', 'hold6Pct', 'hold7Pct', 'hold8Pct']) {
   const col = itemColumns.find(c => c.key === k)
-  col.render = (row) => h => h('span', {style: pctColor(row, k)}, row[k] === 0 ? '-' : (row[k] ?? '').toFixed ? Number(row[k]).toFixed(2) : (row[k] ?? ''))
+  col.render = (row) => {
+    const v = row[k]
+    const text = (v === undefined || v === null || v === 0) ? '-' : Number(v).toFixed(2)
+    return h('span', {style: pctColor(row, k)}, text)
+  }
 }
 
 function loadStrategies() {
@@ -192,6 +205,10 @@ function createBatch() {
     newBatchCodes.value = ''
     refresh()
   }).catch(() => { creating.value = false })
+}
+
+function delItem(row) {
+  DeleteTrackItem(row.id).then(() => { refresh() })
 }
 
 function onBatchCheck(keys) {

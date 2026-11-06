@@ -1633,3 +1633,51 @@ export function ValidateCronExpr(arg1) {
 export function WriteSkillFile(arg1, arg2, arg3) {
   return window['go']['main']['App']['WriteSkillFile'](arg1, arg2, arg3);
 }
+
+export function ListTrackStrategies() {
+  return window['go']['main']['App']['ListTrackStrategies']();
+}
+
+export function AddTrackStrategy(arg1) {
+  return window['go']['main']['App']['AddTrackStrategy'](arg1);
+}
+
+export function DelTrackStrategy(arg1) {
+  return window['go']['main']['App']['DelTrackStrategy'](arg1);
+}
+
+export function GetTrackBatches(arg1) {
+  return window['go']['main']['App']['GetTrackBatches'](arg1);
+}
+
+export function GetRecentTrackItems(arg1,arg2) {
+  return window['go']['main']['App']['GetRecentTrackItems'](arg1,arg2);
+}
+
+export function GetTrackStats() {
+  return window['go']['main']['App']['GetTrackStats']();
+}
+
+export function CreateTrackBatch(arg1,arg2,arg3) {
+  return window['go']['main']['App']['CreateTrackBatch'](arg1,arg2,arg3);
+}
+
+export function ImportTrackInboxFolder() {
+  return window['go']['main']['App']['ImportTrackInboxFolder']();
+}
+
+export function OpenTrackInboxDir() {
+  return window['go']['main']['App']['OpenTrackInboxDir']();
+}
+
+export function ExportTrackCSV(arg1) {
+  return window['go']['main']['App']['ExportTrackCSV'](arg1);
+}
+
+export function DeleteTrackBatch(arg1) {
+  return window['go']['main']['App']['DeleteTrackBatch'](arg1);
+}
+
+export function DeleteTrackItem(arg1) {
+  return window['go']['main']['App']['DeleteTrackItem'](arg1);
+}

@@ -199,57 +199,121 @@ func decodeTxtBytes(b []byte) string {
 	return string(b)
 }
 
-// parseTrackTxt 解析txt内容：每行一只票 `代码 [名称] [评分]`，#开头注释跳过
-// 返回：代码列表与附加信息
-type trackTxtLine struct {
-	Code  string
-	Name  string
-	Score string
-}
-
+// parseTrackTxt 智能解析：以识别代码为主，分隔符/字段顺序全兼容。
+// 支持：空格/Tab/逗号（中英文）/顿号/分号/竖线/连字符 分隔；名称、评分、代码任意顺序；
+// 评分支持 9.2、92分、评分92 等写法；名称自动去除引号/括号包裹；带行号自动去行号。
 func parseTrackTxt(content string) []trackTxtLine {
 	var out []trackTxtLine
-	for _, line := range strings.Split(content, "\n") {
-		line = strings.TrimSpace(line)
+	for _, rawLine := range strings.Split(content, "\n") {
+		line := strings.TrimSpace(rawLine)
+		// 去行号（如 "1. 600519.SH ..." 或 "1、600519.SH ..."）；行号后必须紧跟空白，避免误吃 "9.2" 开头的评分
+		if idx := strings.IndexAny(line, ".、．"); idx > 0 && idx <= 4 {
+			prefix := line[:idx]
+			sep := line[idx]
+			// '.'作小数点的情况（如"9.2"）：后面必须跟空白才算行号；'、''．'是明确行号分隔
+			ok := sep != '.' || (idx+1 < len(line) && (line[idx+1] == ' ' || line[idx+1] == '\t'))
+			if isAllDigits(prefix) && ok {
+				line = strings.TrimSpace(line[idx+1:])
+			}
+		}
 		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "//") {
 			continue
 		}
-		// 先按原样解析；首字段识别不出代码且行内有连字符时，兼容 `002086-东方海洋-9.2` 格式重试
+		// 统一分隔符：全角逗号/顿号/分号/竖线/制表符/英文逗号 → 空格
+		for _, s := range []string{"，", "、", "；", "；", "｜", "|", ";", "\t", ",", "\u3000"} {
+			line = strings.ReplaceAll(line, s, " ")
+		}
 		fields := strings.Fields(line)
 		if len(fields) == 0 {
 			continue
 		}
-		if normalizeStockCode(fields[0]) == "" && strings.Contains(line, "-") {
-			parts := strings.SplitN(line, "-", 2)
-			rest := ""
-			if idx := strings.IndexAny(parts[1], "- \t"); idx >= 0 {
-				rest = parts[1][idx+1:]
-				parts[1] = parts[1][:idx]
-			}
-			line = parts[0] + " " + parts[1] + " " + rest
-			fields = strings.Fields(line)
-			if len(fields) == 0 {
+		// 逐词归类：代码优先识别，评分次之，其余当名称（顺序无关）
+		var code, name, score string
+		for _, f := range fields {
+			f = strings.Trim(f, "\"'‘’“”()（）[]【】")
+			if f == "" {
 				continue
 			}
-		}
-		code := normalizeStockCode(fields[0])
-		if code == "" {
-			continue
-		}
-		row := trackTxtLine{Code: code}
-		// 后续字段：纯字母汉字开头的当名称；含数字/小数点的当评分
-		for _, f := range fields[1:] {
-			if strings.ContainsAny(f, "0123456789.") && f != code {
-				if row.Score == "" {
-					row.Score = f
+			// 1) 代码（含 002086-东方海洋 连字符词）
+			if code == "" {
+				if c, rest := splitCodeWord(f); c != "" {
+					code = c
+					if rest != "" && name == "" {
+						name = rest
+					}
+					continue
 				}
-			} else if row.Name == "" {
-				row.Name = f
+			}
+			// 2) 评分（支持 9.2 / 92分 / 评分92）
+			if score == "" {
+				s := strings.TrimSuffix(strings.TrimPrefix(strings.TrimSuffix(f, "分"), "评分"), "分")
+				if s != f && isScoreLike(s) {
+					score = s
+					continue
+				}
+				if s == f && isScoreLike(s) && !looksLikeCode(s) && len(fields) > 1 {
+					// 裸数字评分（如 "600519.SH 贵州茅台 9.2" 的 9.2）
+					score = s
+					continue
+				}
+			}
+			// 3) 名称
+			if name == "" {
+				name = f
 			}
 		}
-		out = append(out, row)
+		if code == "" {
+			continue // 无法识别代码的行丢弃，不入库
+		}
+		out = append(out, trackTxtLine{Code: code, Name: name, Score: score})
 	}
 	return out
+}
+
+// splitCodeWord 尝试从词中提取代码；连字符词（002086-东方海洋）返回代码与剩余名称
+func splitCodeWord(f string) (string, string) {
+	if looksLikeCode(f) {
+		return normalizeStockCode(f), ""
+	}
+	if idx := strings.IndexAny(f, "-—"); idx > 0 {
+		first, rest := f[:idx], f[idx+1:]
+		if looksLikeCode(first) {
+			return normalizeStockCode(first), strings.Trim(rest, "\"'‘’“”()（）[]【】")
+		}
+	}
+	return "", ""
+}
+
+// looksLikeCode 判断是否像股票代码：6位数字 / 600519.SH / sh600519
+func looksLikeCode(f string) bool {
+	u := strings.ToUpper(f)
+	if len(u) == 6 && isAllDigits(u) {
+		return true
+	}
+	if len(u) == 9 && isAllDigits(u[:6]) {
+		suf := u[7:]
+		if (suf == "SH" || suf == "SZ" || suf == "BJ") && u[6] == '.' {
+			return true
+		}
+	}
+	if len(u) == 8 && isAllDigits(u[2:]) {
+		p := u[:2]
+		if p == "SH" || p == "SZ" || p == "BJ" {
+			return true
+		}
+	}
+	return false
+}
+
+// isScoreLike 评分样式：1-5位数字或带1个小数点（9.2 / 92 / 9.25）
+func isScoreLike(s string) bool {
+	if s == "" || len(s) > 5 {
+		return false
+	}
+	if strings.Count(s, ".") > 1 {
+		return false
+	}
+	return isAllDigits(strings.ReplaceAll(s, ".", ""))
 }
 
 // CreateTrackBatch 手动创建批次（代码列表逗号/换行/空格分隔）
@@ -386,6 +450,13 @@ func (a *App) OpenTrackInboxDir() string {
 func trackInboxDir() string {
 	// 跟随数据库所在目录（data/strategy_inbox），换目录部署后仍一致
 	return filepath.Join(filepath.Dir(db.GetDBPath()), "strategy_inbox")
+}
+
+// DeleteTrackItem 删除单条明细
+func (a *App) DeleteTrackItem(itemID uint) string {
+	defer PanicHandler()
+	db.Dao.Where("id = ?", itemID).Delete(&models.TrackItem{})
+	return "已删除"
 }
 
 // DeleteTrackBatch 删除单个批次及其明细
