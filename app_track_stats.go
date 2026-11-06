@@ -29,17 +29,35 @@ func tradeDaysAfter(stockCode, baseDay string, n int) ([]models.DailyKLine, bool
 	return rows, true
 }
 
-// basePriceFor 买入基准价：优先手动 BuyPrice，否则买入日收盘价
+// tradeDaysFrom 从日线库取某代码在 baseDay 当天及之后的交易日序列（升序，含基准日）
+func tradeDaysFrom(stockCode, baseDay string, n int) ([]models.DailyKLine, bool) {
+	var rows []models.DailyKLine
+	err := db.Dao.Where("stock_code = ? AND day >= ?", stockCode, baseDay).
+		Order("day ASC").Limit(n).Find(&rows).Error
+	if err != nil || len(rows) == 0 {
+		return nil, false
+	}
+	return rows, true
+}
+
+// basePriceFor 买入基准价：优先手动 BuyPrice；否则买入日收盘价，
+// 若买入日非交易日（周末/节假日丢txt）则顺延到下一个交易日收盘作为基准
 func basePriceFor(item *models.TrackItem, batch models.TrackBatch) (float64, bool) {
 	if item.BuyPrice > 0 {
 		return item.BuyPrice, true
 	}
 	var row models.DailyKLine
 	err := db.Dao.Where("stock_code = ? AND day = ?", item.StockCode, batch.TradeDate).First(&row).Error
-	if err != nil || row.Close <= 0 {
+	if err == nil && row.Close > 0 {
+		return row.Close, true
+	}
+	// 顺延：取 >= 买入日的第一个交易日
+	var alt models.DailyKLine
+	err = db.Dao.Where("stock_code = ? AND day >= ?", item.StockCode, batch.TradeDate).Order("day ASC").First(&alt).Error
+	if err != nil || alt.Close <= 0 {
 		return 0, false
 	}
-	return row.Close, true
+	return alt.Close, true
 }
 
 // FillBatchHoldings 回填某批次全部票的持仓N日涨幅（增量：按已回填天数跳过）
@@ -90,12 +108,18 @@ func fillItemHoldings(item *models.TrackItem, batch models.TrackBatch) bool {
 		// 次日细节只填一次
 		return false
 	}
-	base, ok := basePriceFor(item, batch)
-	if !ok || base <= 0 {
+	// 取 day >= 买入日的K线：第一根为基准日（买入日，或顺延后的下一交易日），其后为持仓日
+	rows, ok := tradeDaysFrom(item.StockCode, batch.TradeDate, 9)
+	if !ok || len(rows) < 2 {
+		// 还没有可用的基准日或后续交易日：等下次补跑
 		return false
 	}
-	rows, ok := tradeDaysAfter(item.StockCode, batch.TradeDate, 8)
-	if !ok {
+	base := rows[0].Close
+	if item.BuyPrice > 0 {
+		base = item.BuyPrice
+	}
+	holdRows := rows[1:]
+	if len(holdRows) == 0 {
 		return false
 	}
 	updated := false
@@ -114,7 +138,7 @@ func fillItemHoldings(item *models.TrackItem, batch models.TrackBatch) bool {
 	holdSlots := []*float64{&item.Hold1Pct, &item.Hold2Pct, &item.Hold3Pct, &item.Hold4Pct,
 		&item.Hold5Pct, &item.Hold6Pct, &item.Hold7Pct, &item.Hold8Pct}
 	filled := 0
-	for idx, r := range rows {
+	for idx, r := range holdRows {
 		if idx < item.FilledDays {
 			continue // 增量：跳过已回填的交易日
 		}

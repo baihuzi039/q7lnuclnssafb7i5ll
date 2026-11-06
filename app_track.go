@@ -5,11 +5,15 @@ package main
 import (
 	"fmt"
 	"os"
+	"unicode/utf16"
+	"unicode/utf8"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
+
+	"golang.org/x/text/encoding/simplifiedchinese"
 
 	"go-stock/backend/db"
 	"go-stock/backend/logger"
@@ -69,9 +73,14 @@ func (a *App) AddTrackStrategy(name string) *models.TrackStrategy {
 	return st
 }
 
-// DelTrackStrategy 删除策略（级联删批次与票）
+// DelTrackStrategy 删除策略（级联删批次与票，含明细防孤儿数据）
 func (a *App) DelTrackStrategy(id uint) string {
 	defer PanicHandler()
+	var batchIDs []uint
+	db.Dao.Model(&models.TrackBatch{}).Where("strategy_id = ?", id).Pluck("id", &batchIDs)
+	if len(batchIDs) > 0 {
+		db.Dao.Where("batch_id IN ?", batchIDs).Delete(&models.TrackItem{})
+	}
 	db.Dao.Where("strategy_id = ?", id).Delete(&models.TrackBatch{})
 	db.Dao.Where("id = ?", id).Delete(&models.TrackStrategy{})
 	return "已删除策略及其全部批次"
@@ -146,7 +155,8 @@ func normalizeStockCode(code string) string {
 			return code[2:] + "." + p
 		}
 	}
-	return code
+	// 无法识别（如整行是名称/其他文本）→ 丢弃，避免垃圾数据入库
+	return ""
 }
 
 func isAllDigits(s string) bool {
@@ -156,6 +166,37 @@ func isAllDigits(s string) bool {
 		}
 	}
 	return true
+}
+
+// decodeTxtBytes 自动识别 txt 编码（UTF-8 / GBK / UTF-16）并转为 UTF-8，修复记事本另存为 ANSI 或 Unicode 导致的乱码
+func decodeTxtBytes(b []byte) string {
+	// BOM 优先
+	if len(b) >= 3 && b[0] == 0xEF && b[1] == 0xBB && b[2] == 0xBF {
+		return string(b[3:])
+	}
+	if len(b) >= 2 && b[0] == 0xFF && b[1] == 0xFE { // UTF-16 LE
+		us := make([]uint16, 0, len(b)/2)
+		for i := 2; i+1 < len(b); i += 2 {
+			us = append(us, uint16(b[i])|uint16(b[i+1])<<8)
+		}
+		return string(utf16.Decode(us))
+	}
+	if len(b) >= 2 && b[0] == 0xFE && b[1] == 0xFF { // UTF-16 BE
+		us := make([]uint16, 0, len(b)/2)
+		for i := 2; i+1 < len(b); i += 2 {
+			us = append(us, uint16(b[i])<<8|uint16(b[i+1]))
+		}
+		return string(utf16.Decode(us))
+	}
+	if utf8.Valid(b) {
+		return string(b)
+	}
+	// 无 BOM：按 GBK/GB18030 解码
+	dec, err := simplifiedchinese.GB18030.NewDecoder().Bytes(b)
+	if err == nil {
+		return string(dec)
+	}
+	return string(b)
 }
 
 // parseTrackTxt 解析txt内容：每行一只票 `代码 [名称] [评分]`，#开头注释跳过
@@ -173,9 +214,23 @@ func parseTrackTxt(content string) []trackTxtLine {
 		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "//") {
 			continue
 		}
+		// 先按原样解析；首字段识别不出代码且行内有连字符时，兼容 `002086-东方海洋-9.2` 格式重试
 		fields := strings.Fields(line)
 		if len(fields) == 0 {
 			continue
+		}
+		if normalizeStockCode(fields[0]) == "" && strings.Contains(line, "-") {
+			parts := strings.SplitN(line, "-", 2)
+			rest := ""
+			if idx := strings.IndexAny(parts[1], "- \t"); idx >= 0 {
+				rest = parts[1][idx+1:]
+				parts[1] = parts[1][:idx]
+			}
+			line = parts[0] + " " + parts[1] + " " + rest
+			fields = strings.Fields(line)
+			if len(fields) == 0 {
+				continue
+			}
 		}
 		code := normalizeStockCode(fields[0])
 		if code == "" {
@@ -282,7 +337,7 @@ func (a *App) ImportTrackInboxFolder() string {
 			skipped++
 			continue
 		}
-		lines := parseTrackTxt(string(content))
+		lines := parseTrackTxt(decodeTxtBytes(content))
 		if len(lines) == 0 {
 			skipped++
 			continue
@@ -305,6 +360,11 @@ func (a *App) ImportTrackInboxFolder() string {
 		FillBatchHoldings(batch.ID)
 		imported++
 		msgs = append(msgs, fmt.Sprintf("%s → %s 批次 +%d 只", e.Name(), tradeDate, added))
+		// 处理成功的文件挪入 done 子文件夹，避免重复扫描干扰
+		doneDir := filepath.Join(dir, "done")
+		if mkErr := os.MkdirAll(doneDir, 0755); mkErr == nil {
+			os.Rename(filepath.Join(dir, e.Name()), filepath.Join(doneDir, e.Name()))
+		}
 	}
 	sort.Strings(msgs)
 	summary := fmt.Sprintf("导入完成：成功 %d 个文件，跳过 %d 个", imported, skipped)
