@@ -873,6 +873,26 @@ const menuOptions = ref([
             RouterLink,
             {
               to: {
+                name: 'track',
+                query: {
+                  name:"策略跟踪",
+                },
+                onClick: () => {
+                  activeKey.value = 'track'
+                },
+              }
+            },
+            {default: () => '策略跟踪'}
+        ),
+    key: 'track',
+    icon: renderIcon(ServerOutline),
+  },
+  {
+    label: () =>
+        h(
+            RouterLink,
+            {
+              to: {
                 name: 'agent',
                 query: {
                   name:"Ai智能体",

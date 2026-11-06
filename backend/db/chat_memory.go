@@ -74,4 +74,8 @@ func AutoMigrate() {
 	// [local-patch] 本地日线历史库（回测/选股器数据层）
 	Dao.AutoMigrate(&models.DailyKLine{})
 	Dao.AutoMigrate(&models.DailyAuction{})
+	// [local-patch] v8-track 策略套件与批次跟踪
+	Dao.AutoMigrate(&models.TrackStrategy{})
+	Dao.AutoMigrate(&models.TrackBatch{})
+	Dao.AutoMigrate(&models.TrackItem{})
 }
