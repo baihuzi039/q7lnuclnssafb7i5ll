@@ -594,14 +594,21 @@ func (a *App) CheckUpdate(flag int) {
 		tmpFile.Close()
 		defer os.Remove(tmpPath)
 
+		// 慢速自动切换：平均速度低于 256KB/s 持续约2秒（4个采样周期）视为通道卡住，
+		// 中止当前源并从已下载字节处断点续传切换到下一个源，已下载部分不浪费
+		const minSpeedKB = 256.0
 		var downloadSuccess bool
 		for i, src := range sources {
-			err := a.downloadUpdate(src.url, tmpPath, totalSize, downloadID, src.proxy)
+			err := a.downloadUpdateEx(src.url, tmpPath, totalSize, downloadID, src.proxy, minSpeedKB, 4)
 			if err != nil {
+				status := "retrying"
+				if errors.Is(err, data.ErrTooSlow) {
+					status = "switching" // 慢速切换：进度条提示正在换通道，已下载部分保留
+				}
 				logger.SugaredLogger.Warnf("download from %s error: %s, trying next...", src.url, err.Error())
 				go runtime.EventsEmit(a.ctx, "downloadProgress", map[string]any{
 					"downloadId":    downloadID,
-					"status":        "retrying",
+					"status":        status,
 					"attempt":       i + 1,
 					"totalAttempts": len(sources),
 					"proxy":         src.proxy,
@@ -721,7 +728,12 @@ func buildRestartArgs() []string {
 
 // downloadUpdate 包装 data.DownloadWithProgress，通过 Wails 事件发射下载进度。
 func (a *App) downloadUpdate(url string, tmpPath string, totalSize int64, downloadID string, proxy string) error {
-	return data.DownloadWithProgress(a.ctx, url, tmpPath, totalSize,
+	return a.downloadUpdateEx(url, tmpPath, totalSize, downloadID, proxy, 0, 0)
+}
+
+// downloadUpdateEx 可指定慢速阈值（minSpeedKB KB/s，0=不启用）；速度持续过慢时返回错误由上层切换源
+func (a *App) downloadUpdateEx(url string, tmpPath string, totalSize int64, downloadID string, proxy string, minSpeedKB float64, slowStreak int) error {
+	err := data.DownloadWithProgress(a.ctx, url, tmpPath, totalSize,
 		func(downloaded, total int64, percentage, currentSpeed, avgSpeed float64) {
 			go runtime.EventsEmit(a.ctx, "downloadProgress", map[string]any{
 				"downloadId": downloadID,
@@ -734,6 +746,7 @@ func (a *App) downloadUpdate(url string, tmpPath string, totalSize int64, downlo
 				"status":     "downloading",
 			})
 		})
+	return err
 }
 
 func (a *App) isVip(sponsorCode string, downloadUrl string, releaseVersion *models.GitHubReleaseVersion) (string, string, bool) {

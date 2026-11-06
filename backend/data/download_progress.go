@@ -2,6 +2,7 @@ package data
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -18,6 +19,8 @@ type ProgressCallback func(downloaded, total int64, percentage, currentSpeed, av
 const progressEmitInterval = 500 * time.Millisecond
 
 // progressReader 包装 io.ReadCloser，在读取过程中追踪进度并周期性调用回调。
+// 慢速监测：平均速度连续 slowSlowCount 个采样周期低于 minSpeed 字节/秒时返回 ErrTooSlow，
+// 上层捕获后切换下一个源断点续传。
 type progressReader struct {
 	reader        io.ReadCloser
 	total         int64
@@ -26,16 +29,29 @@ type progressReader struct {
 	startTime     time.Time
 	lastEmitTime  time.Time
 	lastEmitBytes int64
+	minSpeed      float64 // 慢速阈值 bytes/s；0=不启用
+	slowLimit     int     // 连续多少个采样周期低于阈值才中止
+	slowCount     int
 }
 
-func newProgressReader(reader io.ReadCloser, total int64, cb ProgressCallback) *progressReader {
+// ErrTooSlow 下载速度持续低于阈值，由上层切换源
+var ErrTooSlow = fmt.Errorf("download speed too slow, switching source")
+
+func newProgressReader(reader io.ReadCloser, total int64, cb ProgressCallback, startOffset int64, minSpeedKB float64, slowLimit int) *progressReader {
 	now := time.Now()
+	ms := minSpeedKB * 1024
+	if ms > 0 && slowLimit <= 0 {
+		slowLimit = 4 // 默认连续4个采样周期（约2秒）过慢才切换
+	}
 	return &progressReader{
 		reader:       reader,
 		total:        total,
 		callback:     cb,
 		startTime:    now,
 		lastEmitTime: now,
+		downloaded:   startOffset,
+		minSpeed:     ms,
+		slowLimit:    slowLimit,
 	}
 }
 
@@ -68,6 +84,15 @@ func (pr *progressReader) Read(p []byte) (int, error) {
 		pr.callback(pr.downloaded, pr.total, percentage, currentSpeed, avgSpeed)
 		pr.lastEmitTime = now
 		pr.lastEmitBytes = pr.downloaded
+		// 慢速监测：平均速度持续低于阈值 → 中止，由上层切换源断点续传
+		if pr.minSpeed > 0 && avgSpeed < pr.minSpeed {
+			pr.slowCount++
+			if pr.slowCount >= pr.slowLimit {
+				return n, ErrTooSlow
+			}
+		} else {
+			pr.slowCount = 0
+		}
 	}
 
 	return n, err
@@ -80,12 +105,23 @@ func (pr *progressReader) Close() error {
 // DownloadWithProgress 从 url 下载到 tmpPath，每 500ms 调用 progressCB。
 // totalSize 为预期大小（来自 GitHub API asset.Size），为 0 时用 Content-Length。
 // 使用 net/http 直接请求（非 resty），避免 resty 重试干扰进度追踪。
-func DownloadWithProgress(ctx context.Context, url string, tmpPath string, totalSize int64, progressCB ProgressCallback) error {
+// minSpeedKB > 0 时启用慢速监测：平均速度持续低于阈值（连续 slowStreak 次）则中止返回错误，
+// 由上层切换下一个源并从已下载字节处断点续传。
+func DownloadWithProgress(ctx context.Context, url string, tmpPath string, totalSize int64, progressCB ProgressCallback, minSpeedKB float64, slowStreak int) error {
+	// 断点续传：已有部分文件则从尾部继续
+	var existing int64
+	if fi, statErr := os.Stat(tmpPath); statErr == nil {
+		existing = fi.Size()
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return fmt.Errorf("创建请求失败: %w", err)
 	}
 	req.Header.Set("User-Agent", "go-stock-updater")
+	if existing > 0 && totalSize > 0 && existing < totalSize {
+		req.Header.Set("Range", fmt.Sprintf("bytes=%d-", existing))
+	}
+	startOffset := existing
 
 	transport := &http.Transport{
 		DialContext: (&net.Dialer{
@@ -117,18 +153,28 @@ func DownloadWithProgress(ctx context.Context, url string, tmpPath string, total
 
 	total := totalSize
 	if total <= 0 {
-		total = resp.ContentLength
+		total = resp.ContentLength + existing
 	}
 
-	out, err := os.Create(tmpPath)
+	// 续传时追加写入；全新下载则重建文件
+	var out *os.File
+	if startOffset > 0 && (resp.StatusCode == http.StatusPartialContent) {
+		out, err = os.OpenFile(tmpPath, os.O_APPEND|os.O_WRONLY, 0644)
+	} else {
+		out, err = os.Create(tmpPath)
+		startOffset = 0
+	}
 	if err != nil {
 		return fmt.Errorf("创建临时文件失败: %w", err)
 	}
 	defer out.Close()
 
-	pr := newProgressReader(resp.Body, total, progressCB)
+	pr := newProgressReader(resp.Body, total, progressCB, startOffset, minSpeedKB, slowStreak)
 	_, err = io.Copy(out, pr)
 	if err != nil {
+		if errors.Is(err, ErrTooSlow) {
+			return err // 原样上抛，上层据此切换源断点续传
+		}
 		return fmt.Errorf("下载写入失败: %w", err)
 	}
 
