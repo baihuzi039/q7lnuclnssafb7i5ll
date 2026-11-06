@@ -25,8 +25,12 @@ func (s DailyKLine) TableName() string {
 
 // DailyKLineSyncStatus 日线数据同步状态（数据管理页展示用）
 type DailyKLineSyncStatus struct {
-	TotalStocks  int64  `json:"totalStocks"`  // 股票基础表总数
-	SyncedStocks int64  `json:"syncedStocks"` // 已有日线的股票数
+	TotalStocks  int64  `json:"totalStocks"`  // 进度分母：沪深A股+北交所股票（不含ETF/异常）
+	TotalAStock  int64  `json:"totalAStock"`  // 沪深A股（60/00/30/68开头）
+	TotalEtf     int64  `json:"totalEtf"`     // 场内ETF/LOF（15/16/50~58开头）
+	TotalBJ      int64  `json:"totalBJ"`      // 北交所（8/4/92开头）
+	TotalOther   int64  `json:"totalOther"`   // 其他/异常代码
+	SyncedStocks int64  `json:"syncedStocks"` // 已有日线的证券数
 	TotalRows    int64  `json:"totalRows"`    // 日线总行数
 	LatestDay    string `json:"latestDay"`    // 库内最新交易日
 	Running      bool   `json:"running"`      // 是否正在同步

@@ -70,7 +70,20 @@ func syncDailyKLineJob(ctx context.Context) {
 
 	// 待同步列表：本地缺失 或 落后于全局最新交易日
 	var targets []data.StockBasic
+	isEtf := func(symbol string) bool {
+		if len(symbol) < 2 {
+			return false
+		}
+		switch symbol[:2] {
+		case "15", "16", "50", "51", "52", "53", "56", "58":
+			return true
+		}
+		return false
+	}
 	for _, b := range basics {
+		if isEtf(b.Symbol) {
+			continue // ETF/LOF 不拉日线（回测用不到，白耗接口配额）
+		}
 		if d, ok := stockLatest[b.TsCode]; ok && globalLatest != "" && d >= globalLatest {
 			continue
 		}
@@ -213,14 +226,39 @@ func (a *App) SyncDailyKLineNow() string {
 	return "日线同步已启动，全市场首次约需 10-20 分钟，可在本页刷新状态查看进度"
 }
 
-// GetDailyKLineSyncStatus 查询日线库状态
+// GetDailyKLineSyncStatus 查询日线库状态（分类计数：A股股票/ETF/其他，避免把基金债券算进股票数）
 func (a *App) GetDailyKLineSyncStatus() models.DailyKLineSyncStatus {
 	defer PanicHandler()
 	st := models.DailyKLineSyncStatus{Running: klineSyncRunning.Load()}
 	if v, ok := klineLastSyncTime.Load().(string); ok {
 		st.LastSyncTime = v
 	}
-	db.Dao.Model(&data.StockBasic{}).Count(&st.TotalStocks)
+	// 分类统计基础表：A股股票(60/00/30/68/8/4开头，排除ETF 51/56/58/15/16/50等) vs ETF
+	type cnt struct {
+		Category string
+		N        int64
+	}
+	var cs []cnt
+	db.Dao.Raw(`SELECT CASE
+		WHEN substr(symbol,1,2) IN ('51','52','53','56','58','15','16','50') THEN 'etf'
+		WHEN substr(symbol,1,2) IN ('60','00','30','68') THEN 'astock'
+		WHEN substr(symbol,1,1) IN ('8','4') THEN 'bj'
+		ELSE 'other' END as category, count(*) as n
+		FROM stock_basics GROUP BY category`).Scan(&cs)
+	for _, c := range cs {
+		switch c.Category {
+		case "astock":
+			st.TotalAStock = c.N
+		case "etf":
+			st.TotalEtf = c.N
+		case "bj":
+			st.TotalBJ = c.N
+		case "other":
+			st.TotalOther = c.N
+		}
+	}
+	st.TotalStocks = st.TotalAStock + st.TotalBJ // 进度分母只算沪深A股+北交所股票
+	// ETF与日线无关，不参与日线同步，不计入分母；other为异常数据展示用
 	db.Dao.Model(&models.DailyKLine{}).Count(&st.TotalRows)
 	db.Dao.Model(&models.DailyKLine{}).Distinct("stock_code").Count(&st.SyncedStocks)
 	if st.TotalRows > 0 {

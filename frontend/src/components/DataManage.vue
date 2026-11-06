@@ -2,9 +2,11 @@
   <n-layout style="padding: 10px;">
     <n-card title="本地日线数据库" size="small" style="margin-bottom: 10px;">
       <n-space vertical size="large">
-        <n-space :size="30">
-          <n-statistic label="股票总数" :value="status.totalStocks || 0" />
-          <n-statistic label="已同步股票" :value="status.syncedStocks || 0" />
+        <n-space :size="24">
+          <n-statistic label="沪深A股" :value="status.totalAStock || 0" />
+          <n-statistic label="北交所" :value="status.totalBJ || 0" />
+          <n-statistic label="场内ETF" :value="status.totalEtf || 0" />
+          <n-statistic label="已同步" :value="status.syncedStocks || 0" />
           <n-statistic label="日线总行数" :value="status.totalRows || 0" />
           <n-statistic label="最新交易日">
             <template #default>{{ status.latestDay || '-' }}</template>
@@ -12,12 +14,14 @@
           <n-statistic label="上次同步">
             <template #default>{{ status.lastSyncTime || '本次运行尚未同步' }}</template>
           </n-statistic>
-          <n-statistic label="竞价记录">
-            <template #default>{{ auctionStat.rows || 0 }} 条 / {{ auctionStat.days || 0 }} 天</template>
-          </n-statistic>
+        </n-space>
+        <n-space :size="24">
+          <n-statistic label="竞价记录" :value="auctionStat.rows || 0" />
+          <n-statistic label="竞价天数" :value="auctionStat.days || 0" />
           <n-statistic label="竞价最新日">
             <template #default>{{ auctionStat.latest || '-' }}</template>
           </n-statistic>
+          <n-statistic v-if="status.totalOther > 0" label="异常代码" :value="status.totalOther" />
         </n-space>
         <n-space>
           <n-button size="small" type="primary" ghost :loading="status.running" @click="syncNow">
@@ -34,8 +38,8 @@
           <n-button size="small" @click="loadStatus">刷新状态</n-button>
         </n-space>
         <n-text depth="3" style="font-size: 12px;">
-          说明：软件会在每个工作日 17:40 自动增量同步全市场日线，启动后 2 分钟也会补跑一次。
-          同步数据供回测与选股使用，不发网络请求、不消耗 AI 额度。首次同步全市场约需 10-20 分钟。
+          说明：进度条 = 已同步 ÷（沪深A股+北交所），ETF与退市代码拉不到日线属正常，不计入分母。
+          软件会在每个工作日 17:40 自动增量同步，启动后 2 分钟也会补跑一次。数据供回测与选股使用，零 AI 消耗。
         </n-text>
         <n-progress v-if="status.totalStocks > 0" type="line"
                     :percentage="syncPercent" indicator-placement="inside" processing />
