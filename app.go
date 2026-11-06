@@ -341,7 +341,7 @@ func (a *App) CheckUpdate(flag int) {
 		runtime.EventsEmit(a.ctx, "updateCheckFailed", map[string]any{
 			"stage":       stage,
 			"message":     message,
-			"releasesUrl": "https://github.com/baihuzi/go-stock/releases",
+			"releasesUrl": "https://github.com/baihuzi039/q7lnuclnssafb7i5ll/releases",
 		})
 	}
 	emitDone := func(hasUpdate bool) {
@@ -400,7 +400,7 @@ func (a *App) CheckUpdate(flag int) {
 		resp, err := apiClient.R().
 			SetHeaders(githubApiHeaders).
 			SetResult(releaseVersion).
-			Get("https://api.github.com/repos/baihuzi/go-stock/releases/latest")
+			Get("https://api.github.com/repos/baihuzi039/q7lnuclnssafb7i5ll/releases/latest")
 		if err != nil {
 			logger.SugaredLogger.Errorf("get github release version error:%s", err.Error())
 			emitFailed("metadata", "无法连接更新服务器，请检查网络后重试。")
@@ -416,7 +416,7 @@ func (a *App) CheckUpdate(flag int) {
 		resp, err := apiClient.R().
 			SetHeaders(githubApiHeaders).
 			SetResult(&releases).
-			Get("https://api.github.com/repos/baihuzi/go-stock/releases")
+			Get("https://api.github.com/repos/baihuzi039/q7lnuclnssafb7i5ll/releases")
 		if err != nil {
 			logger.SugaredLogger.Errorf("get github releases error:%s", err.Error())
 			emitFailed("metadata", "无法连接更新服务器，请检查网络后重试。")
@@ -462,7 +462,7 @@ func (a *App) CheckUpdate(flag int) {
 		tagResp, tagErr := apiClient.R().
 			SetHeaders(githubApiHeaders).
 			SetResult(tag).
-			Get("https://api.github.com/repos/baihuzi/go-stock/git/ref/tags/" + releaseVersion.TagName)
+			Get("https://api.github.com/repos/baihuzi039/q7lnuclnssafb7i5ll/git/ref/tags/" + releaseVersion.TagName)
 		if tagErr == nil && tagResp.StatusCode() == 200 && tag.Object.Url != "" {
 			releaseVersion.Tag = *tag
 			commit := &models.Commit{}
@@ -510,7 +510,7 @@ func (a *App) CheckUpdate(flag int) {
 		}
 
 		if downloadUrl == "" {
-			downloadUrl = fmt.Sprintf("https://github.com/baihuzi/go-stock/releases/download/%s/%s", releaseVersion.TagName, assetName)
+			downloadUrl = fmt.Sprintf("https://github.com/baihuzi039/q7lnuclnssafb7i5ll/releases/download/%s/%s", releaseVersion.TagName, assetName)
 		}
 
 		// 当前平台的安装包未包含在该 Release 中（如历史版本未发布 Linux 资产）时，
@@ -771,12 +771,12 @@ func (a *App) isVip(sponsorCode string, downloadUrl string, releaseVersion *mode
 			}
 			if isVip {
 				if sponsorInfo["winDownUrl"] == nil {
-					downloadUrl = fmt.Sprintf("https://gh.927223.xyz/https://github.com/baihuzi/go-stock/releases/download/%s/%s", releaseVersion.TagName, winAssetName)
+					downloadUrl = fmt.Sprintf("https://gh.927223.xyz/https://github.com/baihuzi039/q7lnuclnssafb7i5ll/releases/download/%s/%s", releaseVersion.TagName, winAssetName)
 				} else {
 					downloadUrl = convertor.ToString(sponsorInfo["winDownUrl"])
 				}
 			} else {
-				downloadUrl = fmt.Sprintf("https://github.com/baihuzi/go-stock/releases/download/%s/%s", releaseVersion.TagName, winAssetName)
+				downloadUrl = fmt.Sprintf("https://github.com/baihuzi039/q7lnuclnssafb7i5ll/releases/download/%s/%s", releaseVersion.TagName, winAssetName)
 			}
 		}
 		if IsMacOS() {
@@ -784,12 +784,12 @@ func (a *App) isVip(sponsorCode string, downloadUrl string, releaseVersion *mode
 			// 裸二进制 URL 会导致 ApplyMacUpdate 解压失败
 			if isVip {
 				if sponsorInfo["macDownUrl"] == nil {
-					downloadUrl = fmt.Sprintf("https://gh.927223.xyz/https://github.com/baihuzi/go-stock/releases/download/%s/go-stock-darwin-universal.zip", releaseVersion.TagName)
+					downloadUrl = fmt.Sprintf("https://gh.927223.xyz/https://github.com/baihuzi039/q7lnuclnssafb7i5ll/releases/download/%s/go-stock-darwin-universal.zip", releaseVersion.TagName)
 				} else {
 					downloadUrl = convertor.ToString(sponsorInfo["macDownUrl"])
 				}
 			} else {
-				downloadUrl = fmt.Sprintf("https://github.com/baihuzi/go-stock/releases/download/%s/go-stock-darwin-universal.zip", releaseVersion.TagName)
+				downloadUrl = fmt.Sprintf("https://github.com/baihuzi039/q7lnuclnssafb7i5ll/releases/download/%s/go-stock-darwin-universal.zip", releaseVersion.TagName)
 			}
 		}
 		if IsLinux() {
@@ -799,12 +799,12 @@ func (a *App) isVip(sponsorCode string, downloadUrl string, releaseVersion *mode
 			}
 			if isVip {
 				if sponsorInfo["linuxDownUrl"] == nil {
-					downloadUrl = fmt.Sprintf("https://gh.927223.xyz/https://github.com/baihuzi/go-stock/releases/download/%s/%s", releaseVersion.TagName, linuxAssetName)
+					downloadUrl = fmt.Sprintf("https://gh.927223.xyz/https://github.com/baihuzi039/q7lnuclnssafb7i5ll/releases/download/%s/%s", releaseVersion.TagName, linuxAssetName)
 				} else {
 					downloadUrl = convertor.ToString(sponsorInfo["linuxDownUrl"])
 				}
 			} else {
-				downloadUrl = fmt.Sprintf("https://github.com/baihuzi/go-stock/releases/download/%s/%s", releaseVersion.TagName, linuxAssetName)
+				downloadUrl = fmt.Sprintf("https://github.com/baihuzi039/q7lnuclnssafb7i5ll/releases/download/%s/%s", releaseVersion.TagName, linuxAssetName)
 			}
 		}
 

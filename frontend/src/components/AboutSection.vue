@@ -299,7 +299,7 @@ EventsOn("updateNeedAdmin", (msg) => {
           <template #icon>📖</template>
           查看用户手册
         </n-button>
-        <n-button size="small" tag="a" href="https://github.com/baihuzi/go-stock" target="_blank" type="default" tertiary round>
+        <n-button size="small" tag="a" href="https://github.com/baihuzi039/q7lnuclnssafb7i5ll" target="_blank" type="default" tertiary round>
           <template #icon>⭐</template>
           GitHub
         </n-button>
