@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"go-stock/backend/db"
 	"go-stock/backend/logger"
@@ -320,7 +319,7 @@ func (a *App) OpenTrackInboxDir() string {
 	defer PanicHandler()
 	dir := trackInboxDir()
 	os.MkdirAll(dir, 0755)
-	runtime.BrowserOpenURL(a.ctx, "file://"+dir)
+	openDir(dir)
 	return dir
 }
 
