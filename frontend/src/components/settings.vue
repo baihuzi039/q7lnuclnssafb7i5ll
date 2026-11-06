@@ -23,6 +23,7 @@ import {data, models} from "../../wailsjs/go/models";
 import {EventsEmit} from "../../wailsjs/runtime";
 import {HelpCircleFilledIcon, HelpIcon} from "tdesign-icons-vue-next";
 import PlazaAuthModal from './plazaAuthModal.vue'
+import AboutSection from './AboutSection.vue'
 
 const message = useMessage()
 const dialog = useDialog()
@@ -927,6 +928,9 @@ function deletePrompt(ID) {
   <n-flex justify="left" style="text-align: left; --wails-draggable:no-drag">
     <n-form ref="formRef" :label-placement="'left'" :label-align="'left'">
       <n-space vertical size="large">
+        <n-card :title="() => h(NTag, { type: 'primary', bordered: false }, () => '关于')" size="small">
+          <AboutSection />
+        </n-card>
         <n-card :title="() => h(NTag, { type: 'primary', bordered: false }, () => '基础设置')" size="small">
           <n-grid :cols="24" :x-gap="24" style="text-align: left">
 <!--            <n-form-item-gi :span="10" label="Tushare Token：" path="tushareToken">

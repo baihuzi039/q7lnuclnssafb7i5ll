@@ -6,14 +6,17 @@
           <n-statistic label="沪深A股" :value="status.totalAStock || 0" />
           <n-statistic label="北交所" :value="status.totalBJ || 0" />
           <n-statistic label="场内ETF" :value="status.totalEtf || 0" />
+        </n-space>
+        <n-space :size="24" align="center">
           <n-statistic label="已同步" :value="status.syncedStocks || 0" />
           <n-statistic label="日线总行数" :value="status.totalRows || 0" />
           <n-statistic label="最新交易日">
             <template #default>{{ status.latestDay || '-' }}</template>
           </n-statistic>
-          <n-statistic label="上次同步">
-            <template #default>{{ status.lastSyncTime || '本次运行尚未同步' }}</template>
-          </n-statistic>
+          <div class="last-sync-chip">
+            <div class="last-sync-label">上次同步</div>
+            <div class="last-sync-value">{{ status.lastSyncTime || '本次运行尚未同步' }}</div>
+          </div>
         </n-space>
         <n-space :size="24">
           <n-statistic label="竞价记录" :value="auctionStat.rows || 0" />
@@ -199,3 +202,23 @@ onMounted(() => {
 })
 onBeforeUnmount(() => { EventsOff('dailyKLineSyncDone') })
 </script>
+
+<style scoped>
+.last-sync-chip {
+  padding: 8px 16px;
+  border-radius: 8px;
+  background: rgba(24, 160, 88, 0.12);
+  border: 1px solid rgba(24, 160, 88, 0.35);
+  text-align: center;
+}
+.last-sync-label {
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.82);
+}
+.last-sync-value {
+  font-size: 24px;
+  font-weight: 600;
+  color: #63e2b7;
+  white-space: nowrap;
+}
+</style>

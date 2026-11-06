@@ -1316,27 +1316,7 @@ const menuOptions = ref([
       },
     ],
   },
-  {
-    label: () =>
-        h(
-            RouterLink,
-            {
-              to: {
-                name: 'about',
-                query: {
-                  name:"关于",
-                }
-              },
-              onClick: () => {
-                activeKey.value = 'about'
-              },
-            },
-            {default: () => '关于'}
-        ),
-    key: 'about',
-    icon: renderIcon(LogoGithub),
-    show: true,
-  },
+  // 「关于」已移入设置页顶部，不再作为独立菜单项
   {
     show:false,
     label: () => h("a", {
