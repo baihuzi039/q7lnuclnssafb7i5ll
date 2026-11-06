@@ -4,8 +4,6 @@ package main
 // 交易规则：信号日收盘确认 → 次日收盘卖出（今买明卖）；成本按佣金万2.5双边+卖出印花税千1。
 
 import (
-	"fmt"
-	"sort"
 	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
