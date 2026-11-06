@@ -136,8 +136,9 @@ func DownloadWithProgress(ctx context.Context, url string, tmpPath string, total
 		ResponseHeaderTimeout: 60 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
 		ForceAttemptHTTP2:     true,
-		// 下载走 GitHub 镜像源（gh-proxy 等国内可达反代节点），保持直连，不使用配置的代理
-		Proxy: nil,
+		// 尊重系统/VPN代理环境变量（HTTP_PROXY/HTTPS_PROXY）：用户开VPN时自动走VPN加速，
+		// 未开VPN时为 nil 等效直连，不影响镜像源下载
+		Proxy: http.ProxyFromEnvironment,
 	}
 	client := &http.Client{Transport: transport}
 
