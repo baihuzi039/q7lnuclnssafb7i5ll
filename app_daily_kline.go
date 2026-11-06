@@ -239,12 +239,17 @@ func (a *App) GetDailyKLineSyncStatus() models.DailyKLineSyncStatus {
 		N        int64
 	}
 	var cs []cnt
+	// ts_code 形如 600519.SH / 000001.SZ / 833171.BJ / 510300.SH(ETF)，
+	// symbol 字段在部分历史数据里可能为空，故统一用 ts_code 前缀判断；
+	// 已退市股（list_status=D/P）不纳入分类展示，避免干扰总数
 	db.Dao.Raw(`SELECT CASE
-		WHEN substr(symbol,1,2) IN ('51','52','53','56','58','15','16','50') THEN 'etf'
-		WHEN substr(symbol,1,2) IN ('60','00','30','68') THEN 'astock'
-		WHEN substr(symbol,1,1) IN ('8','4') THEN 'bj'
+		WHEN substr(ts_code,1,2) IN ('51','52','53','56','58','15','16','50','11','12','13') THEN 'etf'
+		WHEN substr(ts_code,1,2) IN ('60','00','30','68') THEN 'astock'
+		WHEN substr(ts_code,1,1) IN ('8','4') THEN 'bj'
 		ELSE 'other' END as category, count(*) as n
-		FROM stock_basics GROUP BY category`).Scan(&cs)
+		FROM tushare_stock_basic
+		WHERE list_status = 'L' OR list_status = '' OR list_status IS NULL
+		GROUP BY category`).Scan(&cs)
 	for _, c := range cs {
 		switch c.Category {
 		case "astock":
