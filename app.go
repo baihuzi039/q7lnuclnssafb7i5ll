@@ -745,7 +745,7 @@ func (a *App) downloadUpdateEx(url string, tmpPath string, totalSize int64, down
 				"proxy":      proxy,
 				"status":     "downloading",
 			})
-		})
+		}, minSpeedKB, slowStreak)
 	return err
 }
 
