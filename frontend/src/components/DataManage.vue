@@ -45,7 +45,10 @@
           软件会在每个工作日 17:40 自动增量同步，启动后 2 分钟也会补跑一次。数据供回测与选股使用，零 AI 消耗。
         </n-text>
         <n-progress v-if="status.totalStocks > 0" type="line"
-                    :percentage="syncPercent" indicator-placement="inside" processing />
+                    :percentage="syncPercent" :status="syncPercent >= 100 ? 'success' : 'default'" indicator-placement="inside" />
+        <n-text depth="3" style="font-size: 12px;">
+          数据覆盖 {{ status.syncedStocks || 0 }} 只代码（含已退市），当前在市同步目标 {{ status.totalStocks || 0 }} 只（沪深A股+北交所）。
+        </n-text>
       </n-space>
     </n-card>
 
@@ -87,8 +90,9 @@ const queryCode = ref('')
 const klineRows = ref([])
 
 const syncPercent = computed(() => {
+  // 已同步含历史退市代码，可能大于在市目标数，封顶100%防虚高
   if (!status.value.totalStocks) return 0
-  return Math.round((status.value.syncedStocks || 0) / status.value.totalStocks * 100)
+  return Math.min(100, Math.round((status.value.syncedStocks || 0) / status.value.totalStocks * 100))
 })
 
 const klineColumns = [
