@@ -19,6 +19,7 @@ import morningStrategy from "../components/MorningStrategy.vue"
 import promptBacktest from "../components/PromptBacktest.vue"
 import recommendBacktestStats from "../components/RecommendBacktestStats.vue"
 import dataManage from "../components/DataManage.vue"
+import backtest from "../components/Backtest.vue"
 
 const routes = [
     { path: '/', redirect: '/home'},
@@ -41,6 +42,7 @@ const routes = [
     { path: '/prompt-backtest', component: promptBacktest,name: 'promptBacktest' },
     { path: '/recommend-backtest-stats', component: recommendBacktestStats,name: 'recommendBacktestStats' },
     { path: '/data-manage', component: dataManage,name: 'dataManage' },
+    { path: '/backtest', component: backtest,name: 'backtest' },
 
 ]
 

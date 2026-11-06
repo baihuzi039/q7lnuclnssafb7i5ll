@@ -172,7 +172,7 @@ func (a *App) doSnapshotAuction() {
 	saved := 0
 	for page := 1; page <= 3; page++ {
 		res := api.GetAllStocks(page, 3000, "", models.TechnicalIndicators{})
-		if res == nil || res.Result == nil {
+		if res == nil {
 			continue
 		}
 		rows := make([]models.DailyAuction, 0, len(res.Result.Data))

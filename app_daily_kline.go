@@ -150,7 +150,7 @@ func toF(s string) float64 {
 // ExportDatabaseBackup 导出 stock.db 备份到指定文件夹（WAL 收拢后整文件拷贝，不中断服务）
 func (a *App) ExportDatabaseBackup() string {
 	defer PanicHandler()
-	dir, err := runtime.OpenDirectoryDialog(a.ctx, "选择备份保存位置")
+	dir, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{Title: "选择备份保存位置"})
 	if err != nil || dir == "" {
 		return ""
 	}
@@ -193,7 +193,7 @@ func fileSize(p string) int64 {
 // SelectDirectory 弹出系统文件夹选择框
 func (a *App) SelectDirectory() string {
 	defer PanicHandler()
-	dir, err := runtime.OpenDirectoryDialog(a.ctx, "选择通达信日线数据文件夹（内含 .day 文件）")
+	dir, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{Title: "选择通达信日线数据文件夹"})
 	if err != nil || dir == "" {
 		return ""
 	}
@@ -262,7 +262,7 @@ type ExportReq struct {
 // ExportDataCSV 按类别导出 CSV 到用户选择的文件夹
 func (a *App) ExportDataCSV(req ExportReq) string {
 	defer PanicHandler()
-	dir, err := runtime.OpenDirectoryDialog(a.ctx, "选择导出保存位置")
+	dir, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{Title: "选择导出保存位置"})
 	if err != nil || dir == "" {
 		return ""
 	}

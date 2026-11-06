@@ -837,6 +837,24 @@ const menuOptions = ref([
                 RouterLink,
                 {
                   to: {
+                    name: 'backtest',
+                    params: {},
+                  },
+                  onClick: () => {
+                    activeKey.value = 'backtest'
+                  },
+                },
+                {default: () => '策略回测'}
+            ),
+        key: 'backtest',
+        icon: renderIcon(StatsChartOutline),
+      },
+  {
+        label: () =>
+            h(
+                RouterLink,
+                {
+                  to: {
                     name: 'dataManage',
                     params: {},
                   },
