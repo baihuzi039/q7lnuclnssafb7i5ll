@@ -201,7 +201,7 @@ func parseTrackTxt(content string) []trackTxtLine {
 // CreateTrackBatch 手动创建批次（代码列表逗号/换行/空格分隔）
 func (a *App) CreateTrackBatch(strategyID uint, tradeDate string, codeList string) string {
 	defer PanicHandler()
-	strategyID, tradeDate := strategyID, strings.TrimSpace(tradeDate)
+	tradeDate = strings.TrimSpace(tradeDate)
 	if tradeDate == "" {
 		tradeDate = time.Now().Format("2006-01-02")
 	}

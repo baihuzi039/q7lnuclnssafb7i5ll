@@ -1210,7 +1210,7 @@ func (a *App) domReady(ctx context.Context) {
 			go func() {
 				syncDailyKLineJob(a.ctx)
 				// 同步完成后：扫描策略收件箱 + 回填批次涨幅
-				ImportTrackInboxFolder()
+				a.ImportTrackInboxFolder()
 				FillAllTrackHoldings()
 			}()
 		})
@@ -1219,7 +1219,7 @@ func (a *App) domReady(ctx context.Context) {
 		// [local-patch] v8-track 启动时补一次收件箱扫描与涨幅回填
 		go func() {
 			time.Sleep(90 * time.Second)
-			ImportTrackInboxFolder()
+			a.ImportTrackInboxFolder()
 			FillAllTrackHoldings()
 		}()
 		// [local-patch] 集合竞价快照：交易日 9:26 自动抓（竞价撮合完成时刻，错过即失）
