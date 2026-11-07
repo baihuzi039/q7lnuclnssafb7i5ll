@@ -177,9 +177,15 @@ function importInbox() {
   importing.value = true
   ImportTrackInboxFolder().then((res) => {
     importing.value = false
-    if (window.$message) window.$message.info(res || '完成')
+    const msg = res || '完成'
+    if (window.$message) { window.$message.info(msg, {duration: 6000}) }
+    else { alert(msg) } // 兜底：message组件未初始化时用系统弹窗，绝不静默
     refresh()
-  }).catch(() => { importing.value = false })
+  }).catch((e) => {
+    importing.value = false
+    const msg = '扫描导入失败: ' + (e && e.message ? e.message : e)
+    if (window.$message) { window.$message.error(msg, {duration: 6000}) } else { alert(msg) }
+  })
 }
 
 function openInboxDir() {

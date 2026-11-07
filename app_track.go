@@ -388,8 +388,11 @@ func (a *App) ImportTrackInboxFolder() string {
 		stName := base[:idx]
 		datePart := base[idx+1:]
 		var st models.TrackStrategy
-		if err := db.Dao.Where("name = ?", stName).First(&st).Error; err != nil {
-			msgs = append(msgs, "无策略「"+stName+"」，跳过 "+e.Name())
+		if err := db.Dao.Where("name = ?", strings.TrimSpace(stName)).First(&st).Error; err != nil {
+			// 列出实际存在的策略名，帮助定位是名字不匹配还是绑定未生效
+			var names []string
+			db.Dao.Model(&models.TrackStrategy{}).Pluck("name", &names)
+			msgs = append(msgs, "无策略「"+stName+"」，跳过 "+e.Name()+"（现有策略: "+strings.Join(names, "、")+"）")
 			skipped++
 			continue
 		}
