@@ -199,6 +199,13 @@ func decodeTxtBytes(b []byte) string {
 	return string(b)
 }
 
+// trackTxtLine 单行解析结果：归一化后的代码/名称/评分原文
+type trackTxtLine struct {
+	Code  string
+	Name  string
+	Score string
+}
+
 // parseTrackTxt 智能解析：以识别代码为主，分隔符/字段顺序全兼容。
 // 支持：空格/Tab/逗号（中英文）/顿号/分号/竖线/连字符 分隔；名称、评分、代码任意顺序；
 // 评分支持 9.2、92分、评分92 等写法；名称自动去除引号/括号包裹；带行号自动去行号。
