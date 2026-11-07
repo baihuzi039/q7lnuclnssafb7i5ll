@@ -96,31 +96,31 @@ const newBatchCodes = ref('')
 
 const fmt2 = (v) => (v === undefined || v === null || v === 0 ? '-' : Number(v).toFixed(2))
 
-const h = (title, key, width) => ({title, key, width: width || 90})
+const mkCol = (title, key, width) => ({title, key, width: width || 90})
 
 const batchColumns = [
   {type: 'selection'},
-  h('批次日期', 'tradeDate', 110),
-  h('来源', 'source', 70),
+  mkCol('批次日期', 'tradeDate', 110),
+  mkCol('来源', 'source', 70),
   h('备注', 'remark'),
 ]
 
 const itemColumns = [
-  h('日期', 'tradeDate', 105),
-  h('代码', 'stockCode', 100),
-  h('名称', 'stockName', 90),
-  h('评分', 'score', 70),
-  h('次日开%', 'nextOpenPct', 85),
-  h('次日高%', 'nextHighPct', 85),
-  h('次日收%', 'nextClosePct', 85),
-  h('1日%', 'hold1Pct', 75),
-  h('2日%', 'hold2Pct', 75),
-  h('3日%', 'hold3Pct', 75),
-  h('4日%', 'hold4Pct', 75),
-  h('5日%', 'hold5Pct', 75),
-  h('6日%', 'hold6Pct', 75),
-  h('7日%', 'hold7Pct', 75),
-  h('8日%', 'hold8Pct', 75),
+  mkCol('日期', 'tradeDate', 105),
+  mkCol('代码', 'stockCode', 100),
+  mkCol('名称', 'stockName', 90),
+  mkCol('评分', 'score', 70),
+  mkCol('次日开%', 'nextOpenPct', 85),
+  mkCol('次日高%', 'nextHighPct', 85),
+  mkCol('次日收%', 'nextClosePct', 85),
+  mkCol('1日%', 'hold1Pct', 75),
+  mkCol('2日%', 'hold2Pct', 75),
+  mkCol('3日%', 'hold3Pct', 75),
+  mkCol('4日%', 'hold4Pct', 75),
+  mkCol('5日%', 'hold5Pct', 75),
+  mkCol('6日%', 'hold6Pct', 75),
+  mkCol('7日%', 'hold7Pct', 75),
+  mkCol('8日%', 'hold8Pct', 75),
   {
     title: '操作', key: 'op', width: 70,
     render(row) {
