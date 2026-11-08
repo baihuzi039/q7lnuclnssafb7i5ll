@@ -275,7 +275,7 @@ func overnightScan(day string) ([]OvernightCand, string, error) {
 		if volpct >= 0 && volpct < 10 {
 			s += 1
 		}
-		if streak > 2.5 && streak <= 3.5 {
+		if streak == 3 { // Python: 2.5<streak<=3.5，streak为整数即==3
 			s += 1
 		}
 		if hslv >= 0 && hslv < 2 {
