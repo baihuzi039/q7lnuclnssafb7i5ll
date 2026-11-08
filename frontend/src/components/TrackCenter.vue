@@ -38,6 +38,7 @@
           </n-button>
           <n-button size="small" type="info" ghost @click="openInboxDir">打开收件箱文件夹</n-button>
           <n-button size="small" type="warning" ghost :loading="exporting" @click="exportCSV">导出 CSV</n-button>
+          <n-button size="small" type="success" ghost :loading="exportingXlsx" @click="exportXlsxTop">导出 Excel</n-button>
           <n-button size="small" @click="refresh">刷新</n-button>
         </n-space>
         <n-text depth="3" style="font-size: 12px;">
@@ -233,6 +234,16 @@ function delItem(row) {
 }
 
 // 按原版模板导出该批次为Excel（需模板文件 data/templates/<策略名>.xlsx）
+const exportingXlsx = ref(false)
+// 顶部按钮：导出当前策略最新批次（原版模板格式）
+function exportXlsxTop() {
+  if (!batches.value.length) {
+    window.$message ? window.$message.warning('当前策略没有批次，先导入或新建批次') : alert('当前策略没有批次')
+    return
+  }
+  const latest = batches.value[0] // 已按日期倒序，取最新
+  exportExcel(latest)
+}
 function exportExcel(row) {
   const sid = Number(activeStrategy.value)
   ExportTrackExcel(sid, row.id).then((res) => {
