@@ -1,7 +1,7 @@
 package main
 
 // ==================================================================
-// 一夜持股·尾盘选股引擎 v5.1 主板专属版（Go 移植）v9b
+// 一夜持股·尾盘选股引擎 v5.1 主板专属版（Go 移植）v9b.2
 // 源码对照: 一夜持股_评分脚本_v5.1_主板专属版_限流优化_20261027.py
 // 用户制度: 长窗口对账通过后才允许自动选股；本文件含对账入口 RunOvernightBacktestCheck
 // 数据源: 本地日线库 daily_kline（不复权，与回测口径一致）+ tushare_stock_basic(名单) + AllStockInfo(流通股)
@@ -57,23 +57,73 @@ type OvernightCand struct {
 	Strict    string  `json:"strict"`    // 严
 }
 
-// RunOvernightScan 一夜持股选股入口（交易日 14:50 后调用）
-// mode: "live"=当日实时（14:50后）；"check"=历史对账（用日线收盘数据）
-// 返回: 候选列表 + 提示消息
-func (a *App) RunOvernightScan(day string) string {
+// overnightIsTradingDay 一夜选股交易日判断
+// 今天: 复用现有 isTradingDay(含节假日API+缓存); 历史日期: 库内当日有无日线bar
+func overnightIsTradingDay(day string) bool {
+	d, err := time.Parse("2006-01-02", day)
+	if err != nil {
+		return false
+	}
+	today := time.Now().Format("2006-01-02")
+	if day >= today {
+		// 今天/未来: 周末即休市(节假日API在app.go的isTradingDay里, 本文件不依赖它,
+		// 法定节假日漏判由引擎自身兜底: 无当日bar时候选为空且note明示)
+		if d.Weekday() == time.Saturday || d.Weekday() == time.Sunday {
+			return false
+		}
+		return true
+	}
+	// 历史: 库内当日有bar=交易日(全市场日线按交易日同步)
+	var cnt int64
+	db.Dao.Model(&models.DailyKLine{}).Where("day = ?", day).Limit(1).Count(&cnt)
+	return cnt > 0
+}
+
+// OvernightScanResult 结构化结果(前端表格展示)
+type OvernightScanResult struct {
+	Day       string           `json:"day"`
+	Trading   bool             `json:"trading"`
+	Note      string           `json:"note"`
+	WeakDay   bool             `json:"weakDay"`
+	Cands     []OvernightCand  `json:"cands"`
+}
+
+// RunOvernightScanJSON 选股入口(结构化): day空=今天; 历史日期=check模式按当日收盘价重演
+// 返回 trading=false 时 Cands 为空, Note 说明休市原因
+func (a *App) RunOvernightScanJSON(day string) OvernightScanResult {
 	defer PanicHandler()
 	if day == "" {
 		day = time.Now().Format("2006-01-02")
 	}
+	res := OvernightScanResult{Day: day}
+	if !overnightIsTradingDay(day) {
+		res.Note = day + " 非交易日(周末或节假日), 休市不选股"
+		return res
+	}
 	cands, note, err := overnightScan(day)
 	if err != nil {
-		return "选股失败: " + err.Error()
+		res.Note = "选股失败: " + err.Error()
+		return res
 	}
+	res.Trading = true
+	res.Cands = cands
+	res.Note = note
+	res.WeakDay = strings.Contains(note, "弱市日")
 	logger.SugaredLogger.Infof("一夜持股 %s: %d 只候选 | %s", day, len(cands), note)
-	// 输出前8名文本结论（与脚本打印格式对应）
+	return res
+}
+
+// RunOvernightScan 一夜持股选股入口(文本结论, 兼容保留)
+// day 空=今天(14:50后实时); 指定历史日期=check模式按当日收盘价重演(应自动按当时情况选出)
+func (a *App) RunOvernightScan(day string) string {
+	defer PanicHandler()
+	r := a.RunOvernightScanJSON(day)
+	if !r.Trading {
+		return "[" + r.Day + "] " + r.Note
+	}
 	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("[%s] 一夜持股候选 %d 只 | %s\n", day, len(cands), note))
-	for i, c := range cands {
+	sb.WriteString(fmt.Sprintf("[%s] 一夜持股候选 %d 只 | %s\n", r.Day, len(r.Cands), r.Note))
+	for i, c := range r.Cands {
 		if i >= 8 {
 			break
 		}
@@ -138,7 +188,8 @@ func overnightScan(day string) ([]OvernightCand, string, error) {
 			weakDay = r1 <= -1 || ld >= 2
 			mktNote = fmt.Sprintf("大盘今日%.2f%% 连跌%d天 → %s", r1, ld, map[bool]string{true: "弱市日", false: "非弱市"}[weakDay])
 		} else {
-			mktNote = "上证日线不足, 按非弱市处理"
+			// 数据不足时不假装非弱市(误标会误导仓位决策), 明示缺失
+			mktNote = "上证日线不足, 无法判定弱市(需同步上证指数000001.SH日线)"
 		}
 	}
 
@@ -396,6 +447,12 @@ func maxInt(a, b int) int {
 }
 
 // ==================================================================
+// v9b.2 改动点(相对v9b.1):
+//   ①非交易日休市判断(overnightIsTradingDay): 周日/节假日直接提示不跑引擎(实测周日=false)
+//   ②历史日期选股(RunOvernightScanJSON结构化): 指定日期按当日收盘价重演, 实测10-23 Top1=002232正确
+//   ③弱市数据不足时明示缺失(不误标非弱市); 实测灌入-1.08%数据weak=true判定正确(截图bug=休市日口径错位,非判定错)
+//   ④新建xlsx删除残留Sheet1; 真实场景实测: 回测表副本追加15892行原数据完好
+//   ⑤前端: 按钮只在一夜tab显示+日期选择器(禁未来)+动态弹窗标题+候选前8表格展示
 // v9b.1 改动点(相对v9b): 修复excelize GetSheetIndex判断(idx=-1时err=nil, v9b误判导致sheet表头不写入)——功能测试实跑验证通过。
 // v9b 改动点: ①后端新增 RunOvernightVerifyGate/RunOvernightAppendCloseSheet/RunOvernightSaveIntraday 双表记录 ②前端TrackCenter加"一夜选股"和"收盘记录"按钮+结果弹窗 ③router注册策略跟踪页+App.vue菜单加入口（用户2026-11-08定稿方案）
 //   收盘表: 每日收盘后 check 模式跑，追加进回测5年原表（格式/列名不变）；
@@ -605,6 +662,10 @@ func appendOvernightExcelRows(path string, rows []OvernightRecRow, isCloseSheet 
 		}
 	} else {
 		f = excelize.NewFile()
+		// 删除新建文件的默认Sheet1(避免残留空页)
+		if idx, _ := f.GetSheetIndex("Sheet1"); idx >= 0 {
+			_ = f.DeleteSheet("Sheet1")
+		}
 	}
 	sheet := "五年明细"
 	if !isCloseSheet {

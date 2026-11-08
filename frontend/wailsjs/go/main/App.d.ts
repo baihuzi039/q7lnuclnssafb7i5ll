@@ -856,3 +856,5 @@ export function RunOvernightAppendCloseSheet(arg1,arg2,arg3): Promise<any>;
 export function RunOvernightSaveIntraday(arg1,arg2): Promise<any>;
 
 export function RunOvernightVerifyGate(arg1,arg2): Promise<any>;
+
+export function RunOvernightScanJSON(arg1): Promise<any>;

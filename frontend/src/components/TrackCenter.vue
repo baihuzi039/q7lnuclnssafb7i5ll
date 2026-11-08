@@ -33,8 +33,12 @@
         <!-- 操作区 -->
         <n-space>
           <n-button size="small" type="primary" ghost @click="showAddBatch = true">新建批次</n-button>
-          <n-button size="small" type="error" ghost :loading="overnightLoading" @click="runOvernight">一夜选股(14:50后)</n-button>
-          <n-button size="small" type="warning" ghost :loading="overnightCloseLoading" @click="runOvernightClose">收盘记录</n-button>
+          <template v-if="isOvernightTab">
+            <n-date-picker v-model:value="overnightDateTs" type="date" size="small" style="width: 150px"
+                           :is-date-disabled="disableFutureDates" placeholder="选股日期" />
+            <n-button size="small" type="error" ghost :loading="overnightLoading" @click="runOvernight">一夜选股(14:50后)</n-button>
+            <n-button size="small" type="warning" ghost :loading="overnightCloseLoading" @click="runOvernightClose">收盘记录</n-button>
+          </template>
           <n-button size="small" type="success" ghost :loading="importing" @click="importInbox">
             {{ importing ? '导入中...' : '扫描收件箱导入' }}
           </n-button>
@@ -73,20 +77,33 @@
       </n-space>
     </n-modal>
 
-    <!-- 一夜选股结果弹窗 -->
-    <n-modal v-model:show="showOvernightModal" preset="card" title="一夜选股 / 收盘记录结果" style="width: 640px;">
-      <n-input type="textarea" :value="overnightResult" rows="14" readonly />
+    <!-- 一夜选股/收盘记录结果弹窗 -->
+    <n-modal v-model:show="showOvernightModal" :title="overnightModalTitle" preset="card" style="width: 760px;">
+      <n-space vertical>
+        <n-alert :type="overnightScan && overnightScan.weakDay ? 'warning' : 'info'" :bordered="false">
+          {{ overnightScan ? overnightScan.note : '' }}
+        </n-alert>
+        <n-data-table v-if="overnightScan && overnightScan.cands && overnightScan.cands.length"
+                      size="small" max-height="360" :columns="overnightCandColumns"
+                      :data="overnightScan.cands.slice(0, 8).map((c, i) => ({
+                        idx: i + 1, code: c.code, name: c.name, price: c.price,
+                        net: c.net, oldScore: c.oldScore, v3Score: c.v3Score,
+                        mark: (c.star === '★' ? '★' : (c.star === '半★' ? '半★' : '')) + (c.strict || '') + (c.ztFlag ? ' !涨停难买' : ''),
+                        weightTxt: c.weight > 0 ? Math.round(c.weight * 100) + '%' : (c.v3Score < 0 ? '不参与' : '-')
+                      }))" />
+        <n-empty v-else-if="overnightScan && overnightScan.trading" description="无信号" />
+      </n-space>
     </n-modal>
   </n-layout>
 </template>
 
 <script setup>
-import {onBeforeUnmount, onMounted, ref, h} from 'vue'
+import {onBeforeUnmount, onMounted, ref, h, computed} from 'vue'
 import {
   ListTrackStrategies, AddTrackStrategy, DelTrackStrategy, GetTrackBatches,
   GetRecentTrackItems, GetTrackStats, CreateTrackBatch, ImportTrackInboxFolder,
   OpenTrackInboxDir, ExportTrackCSV, ExportTrackExcel, DeleteTrackBatch, DeleteTrackItem,
-  RunOvernightScan, RunOvernightAppendCloseSheet
+  RunOvernightScan, RunOvernightAppendCloseSheet, RunOvernightScanJSON
 } from '../../wailsjs/go/main/App'
 import {EventsOn, EventsOff} from '../../wailsjs/runtime'
 
@@ -104,32 +121,64 @@ const overnightLoading = ref(false)
 const overnightCloseLoading = ref(false)
 const overnightResult = ref('')
 const showOvernightModal = ref(false)
+const overnightModalTitle = ref('一夜选股结果')
+const overnightScan = ref(null)   // 结构化结果(RunOvernightScanJSON)
+const overnightDateTs = ref(Date.now())
+const isOvernightTab = computed(() => {
+  const s = strategies.value.find(x => String(x.id) === activeStrategy.value)
+  return !!s && /一夜/.test(s.name || '')
+})
+
+function disableFutureDates(ts) { return ts > Date.now() }
+
+function fmtDay(ts) {
+  const d = new Date(ts)
+  const p = (n) => String(n).padStart(2, '0')
+  return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate())
+}
 
 function runOvernight() {
   overnightLoading.value = true
-  RunOvernightScan('').then((res) => {
+  overnightScan.value = null
+  RunOvernightScanJSON(fmtDay(overnightDateTs.value)).then((res) => {
     overnightLoading.value = false
-    overnightResult.value = res || '无返回'
+    overnightScan.value = res || null
+    overnightModalTitle.value = '一夜选股结果 (' + fmtDay(overnightDateTs.value) + ')'
     showOvernightModal.value = true
   }).catch((e) => {
     overnightLoading.value = false
-    overnightResult.value = '失败: ' + e
+    overnightModalTitle.value = '一夜选股结果'
+    overnightScan.value = { trading: false, note: '失败: ' + e, cands: [] }
     showOvernightModal.value = true
   })
 }
 
 function runOvernightClose() {
   overnightCloseLoading.value = true
-  RunOvernightAppendCloseSheet('', '', '').then((res) => {
+  RunOvernightAppendCloseSheet('', fmtDay(overnightDateTs.value), '').then((res) => {
     overnightCloseLoading.value = false
-    overnightResult.value = res || '无返回'
+    overnightModalTitle.value = '收盘记录结果'
+    overnightScan.value = { trading: true, note: res || '无返回', cands: [] }
     showOvernightModal.value = true
   }).catch((e) => {
     overnightCloseLoading.value = false
-    overnightResult.value = '失败: ' + e
+    overnightModalTitle.value = '收盘记录结果'
+    overnightScan.value = { trading: true, note: '失败: ' + e, cands: [] }
     showOvernightModal.value = true
   })
 }
+
+const overnightCandColumns = [
+  { title: '#', key: 'idx', width: 40 },
+  { title: '代码', key: 'code', width: 80 },
+  { title: '名称', key: 'name', width: 100 },
+  { title: '现价', key: 'price', width: 70 },
+  { title: '净涨%#', key: 'net', width: 70 },
+  { title: '旧评分', key: 'oldScore', width: 65 },
+  { title: 'v3', key: 'v3Score', width: 50 },
+  { title: '标记', key: 'mark', width: 80 },
+  { title: '仓位', key: 'weightTxt', width: 70 }
+]
 const newBatchDate = ref('')
 const newBatchCodes = ref('')
 
