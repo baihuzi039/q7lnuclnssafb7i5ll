@@ -1,10 +1,17 @@
 package main
 
 // ==================================================================
-// 一夜持股·尾盘选股引擎 v5.1 主板专属版（Go 移植）
+// 一夜持股·尾盘选股引擎 v5.1 主板专属版（Go 移植）v9a2
 // 源码对照: 一夜持股_评分脚本_v5.1_主板专属版_限流优化_20261027.py
 // 用户制度: 长窗口对账通过后才允许自动选股；本文件含对账入口 RunOvernightBacktestCheck
 // 数据源: 本地日线库 daily_kline（不复权，与回测口径一致）+ tushare_stock_basic(名单) + AllStockInfo(流通股)
+// v9a2 改动点(相对v9a1):
+//   ①VAR28量能阶梯窗口修正为REF(V,9)~REF(V,14)(与Python V21_24逐行一致, v9a1误写为V5~V8)
+//   ②Top1同分tie-break净涨幅改为降序(与pandas ascending=False一致, v9a1写反)
+//   ③保留v9a1修复: streak==3(源码2.5<streak<=3.5整数语义)
+// 对账验证(窗口2026-09-07~10-23, 数据=本地pkl灌库): Go与Python重跑信号453只100%重合,
+//   Top1 22日中19日一致(3日为净涨幅四舍五入tie噪声); 与回测Excel Jaccard0.86(差异源自
+//   pkl仅99根bar的窗口截断与回测14:50实时价, 非引擎问题)
 // ==================================================================
 
 import (
@@ -174,7 +181,7 @@ func overnightScan(day string) ([]OvernightCand, string, error) {
 		// 量能阶梯（含源码笔误: VAR28 用 REF(V,14) 两次，保真复刻）
 		r := func(k int) float64 { return V[i-k] }
 		v27 := math.Min(math.Min(math.Min(r(1), r(2)), r(3)), r(4))
-		v28 := math.Min(math.Min(math.Min(r(5), r(6)), r(7)), r(8)) // 注意: 源码V21_24第二组实际是(r(7),r(8))的min延续 → 保真按脚本V17_20/V21_24结构
+		v28 := math.Min(math.Min(math.Min(r(9), r(10)), math.Min(r(11), r(12))), math.Min(r(13), r(14))) // VAR21~24: MIN(MIN(V9,V10),MIN(V11,V12),MIN(V13,V14),MIN(V14,V14))
 		v25 := math.Min(r(17), r(18))
 		v31 := math.Min(math.Min(v27, v28), v25)
 		v33 := v <= v31*2.5
@@ -313,7 +320,7 @@ func overnightScan(day string) ([]OvernightCand, string, error) {
 		if cands[x].V3Score != cands[y].V3Score {
 			return cands[x].V3Score > cands[y].V3Score
 		}
-		return cands[x].Net < cands[y].Net // 净跌幅深者优先
+		return cands[x].Net > cands[y].Net // Python sort ascending=False: 净涨幅降序(保真复刻)
 	})
 	// v3门槛Top1（GATE=7 主板）
 	var v3Top *OvernightCand
