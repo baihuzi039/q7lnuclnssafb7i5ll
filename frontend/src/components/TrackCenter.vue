@@ -1,15 +1,18 @@
 <template>
   <n-layout style="padding: 10px;">
-    <n-card title="策略跟踪" size="small" style="margin-bottom: 10px;">
+    <n-card size="small" style="margin-bottom: 10px;">
       <n-space vertical size="large">
+        <!-- v9b.4: 标题栏美化(渐变下划线)+下拉按钮移到标题栏右侧蓝框位 -->
+        <div class="track-header">
+          <div class="track-title">策略跟踪</div>
+          <n-dropdown trigger="click" :options="customDropdownOptions" @select="onCustomMenu">
+            <n-button size="small" type="primary" ghost>自定义 ▾</n-button>
+          </n-dropdown>
+        </div>
         <n-tabs type="segment" v-model:value="activeStrategy" @update:value="onSwitchStrategy">
           <n-tab v-for="s in builtinStrategies" :key="s.id" :name="String(s.id)">{{ s.name }}</n-tab>
           <n-tab v-if="activeIsCustom" :name="activeStrategy">{{ activeStrategyName }}</n-tab>
         </n-tabs>
-        <!-- 自建策略: 下拉收纳(B点七日上方偏右) -->
-        <n-dropdown trigger="click" :options="customDropdownOptions" @select="onCustomMenu" style="position:absolute; right: 12px; top: 6px; z-index: 9;">
-          <n-button size="tiny" quaternary>策略 ▾</n-button>
-        </n-dropdown>
 
         <!-- 统计卡片 -->
         <n-space :size="24" v-if="stat.strategyId">
@@ -162,6 +165,7 @@ const customDropdownOptions = computed(() => {
   }
   if (activeIsCustom.value) {
     opts.push({ label: '✎ 重命名当前策略', key: '__rename' })
+    opts.push({ label: '🗑 删除当前策略', key: '__delete', props: { style: 'color:#e88080' } })
   }
   return opts
 })
@@ -173,6 +177,15 @@ function onCustomMenu(key) {
   } else if (key === '__rename') {
     renameStrategyName.value = activeStrategyName.value
     showRenameStrategy.value = true
+  } else if (key === '__delete') {
+    const s = strategies.value.find(x => String(x.id) === activeStrategy.value)
+    if (!s || s.builtin) return
+    if (!confirm('确定删除策略「' + s.name + '」？其全部批次与持仓记录将一并删除，不可恢复。')) return
+    DelTrackStrategy(s.id).then(() => {
+      loadStrategies()
+      activeStrategy.value = ''
+      setTimeout(() => { if (!activeStrategy.value && strategies.value.length) { activeStrategy.value = String(strategies.value[0].id); refresh() } }, 100)
+    })
   } else {
     activeStrategy.value = key
     onSwitchStrategy()
@@ -537,6 +550,25 @@ onBeforeUnmount(() => { EventsOff('dailyKLineSyncDone') })
 </script>
 
 <style scoped>
+/* v9b.4: 标题栏美化 */
+.track-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+.track-title {
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  background: linear-gradient(90deg, #63e2b7, #63a2e8);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  padding-left: 10px;
+  border-left: 3px solid #63e2b7;
+}
 /* v9b.3: 每日最高行淡显 + 表格间距美化 */
 :deep(.bp-hi-row td) {
   color: rgba(128, 128, 128, 0.55) !important;
