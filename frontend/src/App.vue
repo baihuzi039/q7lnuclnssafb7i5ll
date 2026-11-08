@@ -190,7 +190,15 @@ async function refreshEffectiveVip() {
   }
 }
 async function handleKlineAnalysisClick() {
-  // [local-patch] 解锁K线分析菜单入口，跳过VIP校验
+  await refreshEffectiveVip()
+  if (vipLevel.value < 2) {
+    // 有赞助码但未生效时给出具体原因（如尚未生效 / 已到期 / 字段异常），
+    // 避免"关于页显示 VIP2，这里却只说需要升级"的认知冲突
+    getDiscreteMessage().warning(vipInactiveReason.value
+      ? `K线分析需要 VIP2 及以上有效赞助：${vipInactiveReason.value}`
+      : 'K线分析功能需要 VIP2 及以上赞助用户才能使用，请升级后体验')
+    return
+  }
   activeKey.value = 'klineAnalysis'
   router.push({ name: 'klineAnalysis' })
 }
@@ -829,63 +837,25 @@ const menuOptions = ref([
         key: 'recommendBacktestStats',
         icon: renderIcon(AnalyticsOutline),
       },
+      {
+        label: () =>
+            h(
+                RouterLink,
+                {
+                  to: {
+                    name: 'trackCenter',
+                    params: {},
+                  },
+                  onClick: () => {
+                    activeKey.value = 'trackCenter'
+                  },
+                },
+                {default: () => '策略跟踪(Track Center)'}
+            ),
+        key: 'trackCenter',
+        icon: renderIcon(AnalyticsOutline),
+      },
     ]
-  },
-  {
-        label: () =>
-            h(
-                RouterLink,
-                {
-                  to: {
-                    name: 'backtest',
-                    params: {},
-                  },
-                  onClick: () => {
-                    activeKey.value = 'backtest'
-                  },
-                },
-                {default: () => '策略回测'}
-            ),
-        key: 'backtest',
-        icon: renderIcon(StatsChartOutline),
-      },
-  {
-        label: () =>
-            h(
-                RouterLink,
-                {
-                  to: {
-                    name: 'dataManage',
-                    params: {},
-                  },
-                  onClick: () => {
-                    activeKey.value = 'dataManage'
-                  },
-                },
-                {default: () => '数据管理'}
-            ),
-        key: 'dataManage',
-        icon: renderIcon(ServerOutline),
-      },
-  {
-    label: () =>
-        h(
-            RouterLink,
-            {
-              to: {
-                name: 'track',
-                query: {
-                  name:"策略跟踪",
-                },
-                onClick: () => {
-                  activeKey.value = 'track'
-                },
-              }
-            },
-            {default: () => '策略跟踪'}
-        ),
-    key: 'track',
-    icon: renderIcon(ServerOutline),
   },
   {
     label: () =>
@@ -1336,7 +1306,27 @@ const menuOptions = ref([
       },
     ],
   },
-  // 「关于」已移入设置页顶部，不再作为独立菜单项
+  {
+    label: () =>
+        h(
+            RouterLink,
+            {
+              to: {
+                name: 'about',
+                query: {
+                  name:"关于",
+                }
+              },
+              onClick: () => {
+                activeKey.value = 'about'
+              },
+            },
+            {default: () => '关于'}
+        ),
+    key: 'about',
+    icon: renderIcon(LogoGithub),
+    show: true,
+  },
   {
     show:false,
     label: () => h("a", {

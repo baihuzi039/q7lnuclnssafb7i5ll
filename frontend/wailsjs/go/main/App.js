@@ -1685,3 +1685,19 @@ export function DeleteTrackItem(arg1) {
 export function ExportTrackExcel(arg1,arg2) {
   return window['go']['main']['App']['ExportTrackExcel'](arg1,arg2);
 }
+
+export function RunOvernightScan(arg1) {
+  return window['go']['main']['App']['RunOvernightScan'](arg1);
+}
+
+export function RunOvernightAppendCloseSheet(arg1,arg2,arg3) {
+  return window['go']['main']['App']['RunOvernightAppendCloseSheet'](arg1,arg2,arg3);
+}
+
+export function RunOvernightSaveIntraday(arg1,arg2) {
+  return window['go']['main']['App']['RunOvernightSaveIntraday'](arg1,arg2);
+}
+
+export function RunOvernightVerifyGate(arg1,arg2) {
+  return window['go']['main']['App']['RunOvernightVerifyGate'](arg1,arg2);
+}

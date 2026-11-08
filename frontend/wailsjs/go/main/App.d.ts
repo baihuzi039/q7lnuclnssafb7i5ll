@@ -848,3 +848,11 @@ export function DeleteTrackBatch(arg1): Promise<any>;
 export function DeleteTrackItem(arg1): Promise<any>;
 
 export function ExportTrackExcel(arg1,arg2): Promise<any>;
+
+export function RunOvernightScan(arg1): Promise<any>;
+
+export function RunOvernightAppendCloseSheet(arg1,arg2,arg3): Promise<any>;
+
+export function RunOvernightSaveIntraday(arg1,arg2): Promise<any>;
+
+export function RunOvernightVerifyGate(arg1,arg2): Promise<any>;

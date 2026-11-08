@@ -33,6 +33,8 @@
         <!-- 操作区 -->
         <n-space>
           <n-button size="small" type="primary" ghost @click="showAddBatch = true">新建批次</n-button>
+          <n-button size="small" type="error" ghost :loading="overnightLoading" @click="runOvernight">一夜选股(14:50后)</n-button>
+          <n-button size="small" type="warning" ghost :loading="overnightCloseLoading" @click="runOvernightClose">收盘记录</n-button>
           <n-button size="small" type="success" ghost :loading="importing" @click="importInbox">
             {{ importing ? '导入中...' : '扫描收件箱导入' }}
           </n-button>
@@ -70,6 +72,11 @@
         <n-button type="primary" :loading="creating" @click="createBatch">创建并回填</n-button>
       </n-space>
     </n-modal>
+
+    <!-- 一夜选股结果弹窗 -->
+    <n-modal v-model:show="showOvernightModal" preset="card" title="一夜选股 / 收盘记录结果" style="width: 640px;">
+      <n-input type="textarea" :value="overnightResult" rows="14" readonly />
+    </n-modal>
   </n-layout>
 </template>
 
@@ -78,7 +85,8 @@ import {onBeforeUnmount, onMounted, ref, h} from 'vue'
 import {
   ListTrackStrategies, AddTrackStrategy, DelTrackStrategy, GetTrackBatches,
   GetRecentTrackItems, GetTrackStats, CreateTrackBatch, ImportTrackInboxFolder,
-  OpenTrackInboxDir, ExportTrackCSV, ExportTrackExcel, DeleteTrackBatch, DeleteTrackItem
+  OpenTrackInboxDir, ExportTrackCSV, ExportTrackExcel, DeleteTrackBatch, DeleteTrackItem,
+  RunOvernightScan, RunOvernightAppendCloseSheet
 } from '../../wailsjs/go/main/App'
 import {EventsOn, EventsOff} from '../../wailsjs/runtime'
 
@@ -92,6 +100,36 @@ const importing = ref(false)
 const exporting = ref(false)
 const creating = ref(false)
 const showAddBatch = ref(false)
+const overnightLoading = ref(false)
+const overnightCloseLoading = ref(false)
+const overnightResult = ref('')
+const showOvernightModal = ref(false)
+
+function runOvernight() {
+  overnightLoading.value = true
+  RunOvernightScan('').then((res) => {
+    overnightLoading.value = false
+    overnightResult.value = res || '无返回'
+    showOvernightModal.value = true
+  }).catch((e) => {
+    overnightLoading.value = false
+    overnightResult.value = '失败: ' + e
+    showOvernightModal.value = true
+  })
+}
+
+function runOvernightClose() {
+  overnightCloseLoading.value = true
+  RunOvernightAppendCloseSheet('', '', '').then((res) => {
+    overnightCloseLoading.value = false
+    overnightResult.value = res || '无返回'
+    showOvernightModal.value = true
+  }).catch((e) => {
+    overnightCloseLoading.value = false
+    overnightResult.value = '失败: ' + e
+    showOvernightModal.value = true
+  })
+}
 const newBatchDate = ref('')
 const newBatchCodes = ref('')
 

@@ -1,7 +1,7 @@
 package main
 
 // ==================================================================
-// 一夜持股·尾盘选股引擎 v5.1 主板专属版（Go 移植）v9a2
+// 一夜持股·尾盘选股引擎 v5.1 主板专属版（Go 移植）v9b
 // 源码对照: 一夜持股_评分脚本_v5.1_主板专属版_限流优化_20261027.py
 // 用户制度: 长窗口对账通过后才允许自动选股；本文件含对账入口 RunOvernightBacktestCheck
 // 数据源: 本地日线库 daily_kline（不复权，与回测口径一致）+ tushare_stock_basic(名单) + AllStockInfo(流通股)
@@ -17,9 +17,12 @@ package main
 import (
 	"fmt"
 	"math"
+	"os"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/xuri/excelize/v2"
 
 	"go-stock/backend/data"
 	"go-stock/backend/db"
@@ -390,4 +393,254 @@ func maxInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// ==================================================================
+// v9b.1 改动点(相对v9b): 修复excelize GetSheetIndex判断(idx=-1时err=nil, v9b误判导致sheet表头不写入)——功能测试实跑验证通过。
+// v9b 改动点: ①后端新增 RunOvernightVerifyGate/RunOvernightAppendCloseSheet/RunOvernightSaveIntraday 双表记录 ②前端TrackCenter加"一夜选股"和"收盘记录"按钮+结果弹窗 ③router注册策略跟踪页+App.vue菜单加入口（用户2026-11-08定稿方案）
+//   收盘表: 每日收盘后 check 模式跑，追加进回测5年原表（格式/列名不变）；
+//           追加前先复跑一个已有回测数据的旧日期与Excel逐行比对，对上才追加（比对闸门）
+//   尾盘表: 每日14:50跑，独立文件，格式与回测表完全相同，永不与回测表混写
+// 回测表规则(实证): 当日主板有 v3>=7 → 取 v3 最高者(严选口径)；否则取旧评分 Top1
+// ==================================================================
+
+// OvernightRecRow 回测表行结构（与Excel五年明细列序一致）
+type OvernightRecRow struct {
+	BuyDay      string  `json:"buyDay"`      // 买入日
+	Code        string  `json:"code"`        // 代码
+	Name        string  `json:"name"`        // 名称
+	Board       string  `json:"board"`       // 板块
+	V3Score     int     `json:"v3Score"`     // v3评分
+	Mark        string  `json:"mark"`        // 标记
+	OldScore    int     `json:"oldScore"`    // 评分
+	BuyPrice    float64 `json:"buyPrice"`    // 买入价
+	NextOpen    float64 `json:"nextOpen"`    // 次日开盘
+	NextHigh    float64 `json:"nextHigh"`    // 次日最高
+	NextClose   float64 `json:"nextClose"`   // 次日收盘
+	OpenSellPct float64 `json:"openSellPct"` // 开盘卖收益
+	HighSellPct float64 `json:"highSellPct"` // 最高卖收益
+	CloseSellPct float64 `json:"closeSellPct"` // 收盘卖收益
+	Weight      float64 `json:"weight"`      // 建议仓位(尾盘表多一列)
+	Note        string  `json:"note"`        // 次日备注
+}
+
+// overnightTopBySheetRule 按 Excel「v5.1-主板Top1」实证规则选当日Top1
+// (v3>=7 存在→v3最高者; 否则→旧评分Top1, tie: v3降序、净涨幅降序)
+func overnightTopBySheetRule(cands []OvernightCand) *OvernightCand {
+	if len(cands) == 0 {
+		return nil
+	}
+	// v3门槛组
+	var gated []OvernightCand
+	for _, c := range cands {
+		if c.V3Score >= 7 {
+			gated = append(gated, c)
+		}
+	}
+	if len(gated) > 0 {
+		sort.Slice(gated, func(i, j int) bool {
+			if gated[i].V3Score != gated[j].V3Score {
+				return gated[i].V3Score > gated[j].V3Score
+			}
+			if gated[i].OldScore != gated[j].OldScore {
+				return gated[i].OldScore > gated[j].OldScore
+			}
+			return gated[i].Net > gated[j].Net
+		})
+		return &gated[0]
+	}
+	// 旧评分Top1(已排好序的cands[0]即可, 但保险起见再排一次)
+	sorted := make([]OvernightCand, len(cands))
+	copy(sorted, cands)
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].OldScore != sorted[j].OldScore {
+			return sorted[i].OldScore > sorted[j].OldScore
+		}
+		if sorted[i].V3Score != sorted[j].V3Score {
+			return sorted[i].V3Score > sorted[j].V3Score
+		}
+		return sorted[i].Net > sorted[j].Net
+	})
+	return &sorted[0]
+}
+
+// fillNextDayRows 用次日日线回填 next open/high/close 与收益
+func fillNextDayRows(rows []OvernightRecRow) {
+	for i := range rows {
+		var bars []models.DailyKLine
+		db.Dao.Where("stock_code = ?", rows[i].Code+".SH").Order("day ASC").
+			Where("day > ?", rows[i].BuyDay).Limit(2).Find(&bars)
+		if len(bars) == 0 {
+			// 尝试深市后缀
+			db.Dao.Where("stock_code = ?", rows[i].Code+".SZ").Order("day ASC").
+				Where("day > ?", rows[i].BuyDay).Limit(2).Find(&bars)
+		}
+		if len(bars) == 0 {
+			rows[i].Note = "次日数据缺失"
+			continue
+		}
+		nb := bars[0]
+		rows[i].NextOpen = nb.Open
+		rows[i].NextHigh = nb.High
+		rows[i].NextClose = nb.Close
+		if rows[i].BuyPrice > 0 {
+			rows[i].OpenSellPct = math.Round((nb.Open/rows[i].BuyPrice-1)*10000) / 10000
+			rows[i].HighSellPct = math.Round((nb.High/rows[i].BuyPrice-1)*10000) / 10000
+			rows[i].CloseSellPct = math.Round((nb.Close/rows[i].BuyPrice-1)*10000) / 10000
+		}
+	}
+}
+
+// pickStockSuffix 由代码推断 .SH/.SZ 后缀
+func pickStockSuffix(code string) string {
+	if strings.HasPrefix(code, "6") {
+		return code + ".SH"
+	}
+	return code + ".SZ"
+}
+
+// RunOvernightVerifyGate 对账闸门: 复跑指定旧日期(check模式), 与期望Top1(代码)比对
+// 返回 "PASS" 或 "FAIL 实际=xxx 期望=yyy"。用于收盘续写回测表前的强制比对。
+func (a *App) RunOvernightVerifyGate(day, expectCode string) string {
+	defer PanicHandler()
+	cands, _, err := overnightScan(day)
+	if err != nil {
+		return "FAIL err=" + err.Error()
+	}
+	top := overnightTopBySheetRule(cands)
+	if top == nil {
+		if expectCode == "" {
+			return "PASS 双方均无信号"
+		}
+		return "FAIL 实际=无信号 期望=" + expectCode
+	}
+	if expectCode != "" && top.Code != expectCode {
+		return "FAIL 实际=" + top.Code + " 期望=" + expectCode
+	}
+	return "PASS Top1=" + top.Code + " " + top.Name
+}
+
+// RunOvernightAppendCloseSheet 收盘续写: 把 day 的收盘口径Top1追加进回测5年表
+// excelPath=回测原表绝对路径; day=交易日; expectCode=闸门期望(可传""跳过闸门, 不建议)
+// 次日数据缺失时先写入 Note="次日待回填", 次日收盘后再调用一次本函数会自动回填旧行。
+func (a *App) RunOvernightAppendCloseSheet(excelPath, day, expectCode string) string {
+	defer PanicHandler()
+	if excelPath == "" {
+		return "未指定回测表路径"
+	}
+	// 闸门: expectCode 非空时强制比对
+	if expectCode != "" {
+		gate := a.RunOvernightVerifyGate(day, expectCode)
+		if !strings.HasPrefix(gate, "PASS") {
+			return "闸门未通过, 已中止追加: " + gate
+		}
+	}
+	// 选Top1(check模式=收盘价)
+	cands, _, err := overnightScan(day)
+	if err != nil {
+		return "选股失败: " + err.Error()
+	}
+	top := overnightTopBySheetRule(cands)
+	if top == nil {
+		return day + " 无信号, 不追加"
+	}
+	// 组行
+	row := OvernightRecRow{
+		BuyDay: day, Code: top.Code, Name: top.Name, Board: "主板",
+		V3Score: top.V3Score, OldScore: top.OldScore, BuyPrice: top.Price,
+		Mark: top.Strict,
+	}
+	if row.Mark == "" && top.Star == "★" {
+		row.Mark = "★"
+	}
+	rows := []OvernightRecRow{row}
+	fillNextDayRows(rows)
+	// 写Excel(追加行)
+	if err := appendOvernightExcelRows(excelPath, rows, true); err != nil {
+		return "写入失败: " + err.Error()
+	}
+	return "已追加 " + day + " Top1=" + top.Code + " " + top.Name +
+		" 次日:" + fmt.Sprintf("%.2f/%.2f/%.2f", row.NextOpen, row.NextHigh, row.NextClose)
+}
+
+// RunOvernightSaveIntraday 尾盘记录: day 14:50 口径, 写独立xlsx(格式同回测表)
+// excelPath=尾盘记录文件绝对路径(不存在自动创建)
+func (a *App) RunOvernightSaveIntraday(excelPath, day string) string {
+	defer PanicHandler()
+	if excelPath == "" {
+		return "未指定尾盘记录文件路径"
+	}
+	cands, _, err := overnightScan(day)
+	if err != nil {
+		return "选股失败: " + err.Error()
+	}
+	top := overnightTopBySheetRule(cands)
+	if top == nil {
+		return day + " 14:50 无信号"
+	}
+	row := OvernightRecRow{
+		BuyDay: day, Code: top.Code, Name: top.Name, Board: "主板",
+		V3Score: top.V3Score, OldScore: top.OldScore, BuyPrice: top.Price,
+		Mark: top.Strict, Weight: top.Weight,
+	}
+	if row.Mark == "" && top.Star == "★" {
+		row.Mark = "★"
+	}
+	rows := []OvernightRecRow{row}
+	fillNextDayRows(rows)
+	if err := appendOvernightExcelRows(excelPath, rows, false); err != nil {
+		return "写入失败: " + err.Error()
+	}
+	return "已记录尾盘 " + day + " Top1=" + top.Code + " " + top.Name + " 现价" + fmt.Sprintf("%.2f", top.Price)
+}
+
+// appendOvernightExcelRows 追加行到xlsx(格式与回测表一致; 尾盘表多一列"建议仓位")
+// 依赖 go-stock 已有的 excel 导出库(app_track_export.go 同款)
+func appendOvernightExcelRows(path string, rows []OvernightRecRow, isCloseSheet bool) error {
+	var f *excelize.File
+	if _, err := os.Stat(path); err == nil {
+		f, err = excelize.OpenFile(path)
+		if err != nil {
+			return err
+		}
+	} else {
+		f = excelize.NewFile()
+	}
+	sheet := "五年明细"
+	if !isCloseSheet {
+		sheet = "尾盘记录"
+	}
+	// 确保sheet存在(GetSheetIndex返回(idx,err), 不存在时idx=-1); 新建时写表头
+	if sheetIdx, _ := f.GetSheetIndex(sheet); sheetIdx < 0 {
+		headers := []string{"买入日", "代码", "名称", "板块", "v3评分", "标记", "评分", "买入价",
+			"次日开盘", "次日最高", "次日收盘", "开盘卖收益", "最高卖收益", "收盘卖收益"}
+		if !isCloseSheet {
+			headers = append(headers, "建议仓位")
+		}
+		headers = append(headers, "次日备注")
+		if _, err := f.NewSheet(sheet); err != nil {
+			return err
+		}
+		for ci, h := range headers {
+			cell, _ := excelize.CoordinatesToCellName(ci+1, 1)
+			_ = f.SetCellValue(sheet, cell, h)
+		}
+	}
+	// 找到末行追加
+	r0, _ := f.GetRows(sheet)
+	startRow := len(r0) + 1
+	for ri, row := range rows {
+		vals := []interface{}{row.BuyDay, row.Code, row.Name, row.Board, row.V3Score, row.Mark,
+			row.OldScore, row.BuyPrice, row.NextOpen, row.NextHigh, row.NextClose,
+			row.OpenSellPct, row.HighSellPct, row.CloseSellPct}
+		if !isCloseSheet {
+			vals = append(vals, row.Weight)
+		}
+		vals = append(vals, row.Note)
+		for ci, v := range vals {
+			cell, _ := excelize.CoordinatesToCellName(ci+1, startRow+ri)
+			_ = f.SetCellValue(sheet, cell, v)
+		}
+	}
+	return f.SaveAs(path)
 }
