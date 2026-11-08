@@ -375,10 +375,12 @@ func (a *App) ImportTrackInboxFolder() string {
 	}
 	imported, skipped := 0, 0
 	var msgs []string
+	found := 0
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(strings.ToLower(e.Name()), ".txt") {
 			continue
 		}
+		found++
 		base := strings.TrimSuffix(e.Name(), filepath.Ext(e.Name()))
 		idx := strings.LastIndex(base, "_")
 		if idx <= 0 {
@@ -414,6 +416,7 @@ func (a *App) ImportTrackInboxFolder() string {
 		lines := parseTrackTxt(decodeTxtBytes(content))
 		if len(lines) == 0 {
 			skipped++
+			msgs = append(msgs, e.Name()+" 未解析出任何股票（内容不是可识别的 代码/名称/评分 格式）")
 			continue
 		}
 		var batch models.TrackBatch
@@ -441,7 +444,14 @@ func (a *App) ImportTrackInboxFolder() string {
 		}
 	}
 	sort.Strings(msgs)
-	summary := fmt.Sprintf("导入完成：成功 %d 个文件，跳过 %d 个", imported, skipped)
+	if found == 0 {
+		summary := fmt.Sprintf("收件箱里没有txt文件（扫描路径: %s）。请把文件放到这个目录；已成功导入过的文件会被挪入其中的 done 子文件夹", dir)
+		if len(msgs) > 0 {
+			summary += "\n" + strings.Join(msgs, "\n")
+		}
+		return summary
+	}
+	summary := fmt.Sprintf("导入完成：找到 %d 个txt，成功 %d，跳过 %d（扫描路径: %s）", found, imported, skipped, dir)
 	if len(msgs) > 0 {
 		summary += "\n" + strings.Join(msgs, "\n")
 	}
