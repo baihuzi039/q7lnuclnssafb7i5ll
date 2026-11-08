@@ -3,8 +3,13 @@
     <n-card title="策略跟踪" size="small" style="margin-bottom: 10px;">
       <n-space vertical size="large">
         <n-tabs type="segment" v-model:value="activeStrategy" @update:value="onSwitchStrategy">
-          <n-tab v-for="s in strategies" :key="s.id" :name="String(s.id)">{{ s.name }}</n-tab>
+          <n-tab v-for="s in builtinStrategies" :key="s.id" :name="String(s.id)">{{ s.name }}</n-tab>
+          <n-tab v-if="activeIsCustom" :name="activeStrategy">{{ activeStrategyName }}</n-tab>
         </n-tabs>
+        <!-- 自建策略: 下拉收纳(B点七日上方偏右) -->
+        <n-dropdown trigger="click" :options="customDropdownOptions" @select="onCustomMenu" style="position:absolute; right: 12px; top: 6px; z-index: 9;">
+          <n-button size="tiny" quaternary>策略 ▾</n-button>
+        </n-dropdown>
 
         <!-- 统计卡片 -->
         <n-space :size="24" v-if="stat.strategyId">
@@ -39,6 +44,9 @@
             <n-button size="small" type="error" ghost :loading="overnightLoading" @click="runOvernight">一夜选股(14:50后)</n-button>
             <n-button size="small" type="warning" ghost :loading="overnightCloseLoading" @click="runOvernightClose">收盘记录</n-button>
           </template>
+          <template v-else-if="activeIsCustom">
+            <n-tooltip trigger="hover"><template #trigger><n-button size="small" type="error" ghost disabled>选股(待接入)</n-button></template>该自建策略的选股逻辑待接入，先用「新建批次/扫描收件箱导入」加自选股</n-tooltip>
+          </template>
           <n-button size="small" type="success" ghost :loading="importing" @click="importInbox">
             {{ importing ? '导入中...' : '扫描收件箱导入' }}
           </n-button>
@@ -62,8 +70,9 @@
         </n-space>
 
         <!-- 明细表 -->
-        <n-data-table size="small" max-height="380" :columns="itemColumns" :data="items"
-                      :pagination="{pageSize: 50}" />
+        <n-data-table size="small" max-height="380" :columns="displayColumns" :data="displayRows"
+                      :pagination="activeIsCustom ? false : {pageSize: 50}"
+                      :row-class-name="activeIsCustom ? bpRowClass : undefined" />
       </n-space>
     </n-card>
 
@@ -74,6 +83,28 @@
         <n-input v-model:value="newBatchCodes" type="textarea" rows="8"
                  placeholder="每行一只票：代码 [名称] [评分]&#10;600519.SH 贵州茅台 9.2&#10;000001.SZ 平安银行 8.1" />
         <n-button type="primary" :loading="creating" @click="createBatch">创建并回填</n-button>
+      </n-space>
+    </n-modal>
+
+    <!-- 新建策略弹窗 -->
+    <n-modal v-model:show="showNewStrategy" preset="card" title="新建策略" style="width: 420px;">
+      <n-space vertical>
+        <n-input v-model:value="newStrategyName" placeholder="策略名称，如：我的超短1号" @keyup.enter="createStrategy" />
+        <n-space justify="end">
+          <n-button size="small" @click="showNewStrategy = false">取消</n-button>
+          <n-button size="small" type="primary" @click="createStrategy">创建</n-button>
+        </n-space>
+        <n-text depth="3" style="font-size:12px">创建后即可用「新建批次/扫描收件箱导入」加自选股；选股按钮待接入策略逻辑后启用。</n-text>
+      </n-space>
+    </n-modal>
+    <!-- 重命名策略弹窗 -->
+    <n-modal v-model:show="showRenameStrategy" preset="card" title="重命名策略" style="width: 420px;">
+      <n-space vertical>
+        <n-input v-model:value="renameStrategyName" placeholder="新名称" @keyup.enter="renameStrategy" />
+        <n-space justify="end">
+          <n-button size="small" @click="showRenameStrategy = false">取消</n-button>
+          <n-button size="small" type="primary" @click="renameStrategy">保存</n-button>
+        </n-space>
       </n-space>
     </n-modal>
 
@@ -103,12 +134,77 @@ import {
   ListTrackStrategies, AddTrackStrategy, DelTrackStrategy, GetTrackBatches,
   GetRecentTrackItems, GetTrackStats, CreateTrackBatch, ImportTrackInboxFolder,
   OpenTrackInboxDir, ExportTrackCSV, ExportTrackExcel, DeleteTrackBatch, DeleteTrackItem,
+  RenameTrackStrategy,
   RunOvernightScan, RunOvernightAppendCloseSheet, RunOvernightScanJSON
 } from '../../wailsjs/go/main/App'
 import {EventsOn, EventsOff} from '../../wailsjs/runtime'
 
 const strategies = ref([])
 const activeStrategy = ref('')
+const builtinStrategies = computed(() => strategies.value.filter(s => s.builtin))
+const customStrategies = computed(() => strategies.value.filter(s => !s.builtin))
+const activeIsCustom = computed(() => {
+  const s = strategies.value.find(x => String(x.id) === activeStrategy.value)
+  return !!s && !s.builtin
+})
+const activeStrategyName = computed(() => {
+  const s = strategies.value.find(x => String(x.id) === activeStrategy.value)
+  return s ? s.name : ''
+})
+const showNewStrategy = ref(false)
+const newStrategyName = ref('')
+const showRenameStrategy = ref(false)
+const renameStrategyName = ref('')
+const customDropdownOptions = computed(() => {
+  const opts = [{ label: '＋ 新建策略', key: '__new' }]
+  for (const s of customStrategies.value) {
+    opts.push({ label: s.name, key: String(s.id) })
+  }
+  if (activeIsCustom.value) {
+    opts.push({ label: '✎ 重命名当前策略', key: '__rename' })
+  }
+  return opts
+})
+
+function onCustomMenu(key) {
+  if (key === '__new') {
+    newStrategyName.value = ''
+    showNewStrategy.value = true
+  } else if (key === '__rename') {
+    renameStrategyName.value = activeStrategyName.value
+    showRenameStrategy.value = true
+  } else {
+    activeStrategy.value = key
+    onSwitchStrategy()
+  }
+}
+
+function createStrategy() {
+  const name = (newStrategyName.value || '').trim()
+  if (!name) return
+  AddTrackStrategy(name).then((st) => {
+    showNewStrategy.value = false
+    if (st && st.id) {
+      loadStrategies()
+      activeStrategy.value = String(st.id)
+    } else {
+      window.$message ? window.$message.error('创建失败(可能重名)') : alert('创建失败(可能重名)')
+    }
+  })
+}
+
+function renameStrategy() {
+  const name = (renameStrategyName.value || '').trim()
+  if (!name || !activeStrategy.value) return
+  RenameTrackStrategy(Number(activeStrategy.value), name).then((res) => {
+    if (res === 'OK') {
+      showRenameStrategy.value = false
+      loadStrategies()
+    } else {
+      window.$message ? window.$message.error(res || '失败') : alert(res || '失败')
+    }
+  })
+}
 const stat = ref({})
 const batches = ref([])
 const items = ref([])
@@ -207,6 +303,81 @@ const batchColumns = [
     }
   },
 ]
+
+// B点式自建策略明细列（原版口径, v9b.3）: 单日涨幅+区间求和+每日最高行
+const bpColumns = [
+  mkCol('序号', 'idx', 50),
+  mkCol('股票代码', 'stockCode', 95),
+  mkCol('名称', 'stockName', 90),
+  { title: '当日净涨跌幅', key: 'dayNet', width: 105, render: r => pctCellBp(r.dayNet) },
+  mkCol('收盘价', 'closePrice', 75),
+  { title: '收盘涨跌幅', key: 'dayChg', width: 100, render: r => pctCellBp(r.dayChg) },
+  ...[1,2,3,4,5,6,7,8].map(n => ({
+    title: '持仓第' + n + '日', key: 'hold' + n, width: 90, render: r => pctCellBp(r['hold' + n])
+  })),
+  { title: '3日区间', key: 'sum3', width: 90, render: r => pctCellBp(r.sum3) },
+  { title: '7日区间', key: 'sum7', width: 90, render: r => pctCellBp(r.sum7) },
+  {
+    title: '操作', key: 'op', width: 70,
+    render(row) {
+      return h('a', { style: 'color:#e88080;cursor:pointer', onClick: () => delItem(row) }, '删除')
+    }
+  },
+]
+
+// 原版格式: 小数→百分比字串, 空为'-'; 红涨绿跌; 涨停(≥9.9%)加框标
+function pctCellBp(v) {
+  if (v === undefined || v === null) return h('span', {style: 'color:rgba(128,128,128,0.5)'}, '-')
+  const pct = (Number(v) * 100).toFixed(2) + '%'
+  const zt = Number(v) >= 0.099
+  const dt = Number(v) <= -0.099
+  const style = 'font-weight:600;color:' + (Number(v) > 0 ? '#e88080' : Number(v) < 0 ? '#63e2b7' : 'rgba(128,128,128,0.5)')
+  const text = (Number(v) > 0 ? '+' : '') + pct + (zt ? ' ⚡' : dt ? ' ⚡' : '')
+  return h('span', {style: style + (zt ? ';border:1px solid #e88080;border-radius:3px;padding:0 3px' : dt ? ';border:1px solid #63e2b7;border-radius:3px;padding:0 3px' : '')}, text)
+}
+
+// 展开数据: 每股票2行(数据行+每日最高行), B点原版样式; 口径=单日涨幅(相对前日收)
+const bpRows = computed(() => {
+  const out = []
+  let idx = 0
+  for (const it of items.value) {
+    idx++
+    // 数据行: holdN=单日口径(由累计值反推, 后端另给单日字段时直取)
+    const row = {
+      idx, id: it.id, stockCode: it.stockCode, stockName: it.stockName,
+      dayNet: it.dayNetPct, closePrice: it.closePrice, dayChg: it.dayChgPct,
+      sum3: it.sum3Pct, sum7: it.sum7Pct
+    }
+    let prev = null
+    for (let n = 1; n <= 8; n++) {
+      const cum = it['hold' + n + 'Pct']
+      row['hold' + n] = singleDayFromCum(cum, prev)
+      prev = cum
+    }
+    out.push(row)
+    // 每日最高行
+    const hi = { idx: '', stockCode: '', stockName: '', dayNet: null, closePrice: '', dayChg: '每日最高:' }
+    for (let n = 1; n <= 8; n++) hi['hold' + n] = it['high' + n + 'Pct']
+    hi.sum3 = null; hi.sum7 = null; hi._hi = true
+    out.push(hi)
+  }
+  return out
+})
+
+// 每日最高行淡色样式
+function bpRowClass(row) { return row._hi ? 'bp-hi-row' : '' }
+
+// 由累计(相对买入基准)反推单日: dN=(1+cumN)/(1+cumN-1)-1
+function singleDayFromCum(cum, prevCum) {
+  if (cum === undefined || cum === null || cum === 0) return cum === 0 ? 0 : null
+  const c = Number(cum) / 100
+  const p = prevCum === null || prevCum === undefined || prevCum === 0 ? 0 : Number(prevCum) / 100
+  return (1 + c) / (1 + p) - 1
+}
+
+// 当前展示用列: 自建策略用B点式, 内置用原有
+const displayColumns = computed(() => activeIsCustom.value ? bpColumns : itemColumns)
+const displayRows = computed(() => activeIsCustom.value ? bpRows.value : items.value)
 
 const itemColumns = [
   mkCol('日期', 'tradeDate', 105),
@@ -364,3 +535,19 @@ onMounted(() => {
 })
 onBeforeUnmount(() => { EventsOff('dailyKLineSyncDone') })
 </script>
+
+<style scoped>
+/* v9b.3: 每日最高行淡显 + 表格间距美化 */
+:deep(.bp-hi-row td) {
+  color: rgba(128, 128, 128, 0.55) !important;
+  font-size: 11px !important;
+  background: rgba(255, 255, 255, 0.02);
+}
+:deep(.n-data-table-td) {
+  padding: 6px 8px !important;
+}
+:deep(.n-data-table-th) {
+  padding: 8px !important;
+  white-space: nowrap;
+}
+</style>

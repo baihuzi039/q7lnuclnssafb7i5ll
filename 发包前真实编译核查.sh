@@ -3,6 +3,7 @@
 # 用法: bash 发包前真实编译核查.sh  [改动文件...]（不传则核查全部app_track*.go）
 set -e
 TC=/tmp/typecheck
+# v9b.3: models改动也同步(修复: Builtin字段类改动需同步模型)
 WS=/home/lingxi/workspace/go-stock
 # 环境自愈：typecheck丢失时从.ci备份重建（含go工具链检查）
 if [ ! -f "$TC/go.mod" ]; then
@@ -18,6 +19,7 @@ export PATH=/tmp/go124/bin:$PATH GOCACHE=/tmp/gocache5 GOTOOLCHAIN=local GOPROXY
 
 # 同步最新改动文件到typecheck环境（并做本地适配patch）
 for f in app_track.go app_track_stats.go app_track_export.go app_track_overnight.go; do
+  [ "$f" = "app_track.go" ] && cp "$WS/backend/models/track.go" "$TC/models/track.go" 2>/dev/null
   [ -f "$WS/$f" ] && cp "$WS/$f" "$TC/$f"
 done
 cd "$TC"

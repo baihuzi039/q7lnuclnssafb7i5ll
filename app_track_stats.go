@@ -161,11 +161,74 @@ func fillItemHoldings(item *models.TrackItem, batch models.TrackBatch) bool {
 		item.FilledDays = filled
 		updated = true
 	}
+	// ===== v9b.3: B点式口径回填（原版表格式）=====
+	// 当日净涨跌=收/开-1; 收盘涨跌=收/前收-1; 每日最高=第N日高/前日收-1;
+	// 区间3=sum(单日1..3); 区间7=sum(单日1..7)-dayChg（口径由原版表4股精确验证）
+	fillBpFields(item, batch)
 	if updated {
 		db.Dao.Save(item)
 	}
 	return updated
 }
+
+// fillBpFields 回填B点式字段（幂等: 已有值跳过）
+func fillBpFields(item *models.TrackItem, batch models.TrackBatch) {
+	// 买入日 bar（含前收）
+	var buyRow models.DailyKLine
+	if err := db.Dao.Where("stock_code = ? AND day = ?", item.StockCode, batch.TradeDate).First(&buyRow).Error; err != nil {
+		// 顺延第一个交易日
+		var alt models.DailyKLine
+		if err := db.Dao.Where("stock_code = ? AND day >= ?", item.StockCode, batch.TradeDate).Order("day ASC").First(&alt).Error; err != nil {
+			return
+		}
+		buyRow = alt
+	}
+	var prevRow models.DailyKLine
+	hasPrev := db.Dao.Where("stock_code = ? AND day < ?", item.StockCode, buyRow.Day).Order("day DESC").First(&prevRow).Error == nil
+	setIfF := func(dst *float64, v float64) {
+		if *dst == 0 && v != 0 {
+			*dst = v
+		}
+	}
+	if buyRow.Open > 0 {
+		setIfF(&item.DayNetPct, round4(buyRow.Close/buyRow.Open-1))
+	}
+	if hasPrev && prevRow.Close > 0 {
+		setIfF(&item.DayChgPct, round4(buyRow.Close/prevRow.Close-1))
+	}
+	setIfF(&item.ClosePrice, buyRow.Close)
+	// 持仓日: 买入日之后的交易日（与tradeDaysFrom一致）
+	rows, ok := tradeDaysAfter(item.StockCode, buyRow.Day, 8)
+	if !ok {
+		return
+	}
+	prevClose := buyRow.Close
+	single := make([]float64, 0, 8)
+	hiSlots := []*float64{&item.High1Pct, &item.High2Pct, &item.High3Pct, &item.High4Pct,
+		&item.High5Pct, &item.High6Pct, &item.High7Pct, &item.High8Pct}
+	for i, r := range rows {
+		if prevClose > 0 {
+			setIfF(hiSlots[i], round4(r.High/prevClose-1))
+		}
+		single = append(single, r.Close/prevClose-1)
+		prevClose = r.Close
+	}
+	// 区间和
+	s3 := 0.0
+	for i := 0; i < 3 && i < len(single); i++ {
+		s3 += single[i]
+	}
+	setIfF(&item.Sum3Pct, round4(s3))
+	if len(single) >= 7 {
+		s7 := 0.0
+		for i := 0; i < 7; i++ {
+			s7 += single[i]
+		}
+		setIfF(&item.Sum7Pct, round4(s7-item.DayChgPct))
+	}
+}
+
+func round4(f float64) float64 { return math.Round(f*10000) / 10000 }
 
 // GetTrackStats 分策略统计（基于已回填次日收盘的数据）
 func (a *App) GetTrackStats() *[]models.TrackStrategyStat {

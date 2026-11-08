@@ -858,3 +858,5 @@ export function RunOvernightSaveIntraday(arg1,arg2): Promise<any>;
 export function RunOvernightVerifyGate(arg1,arg2): Promise<any>;
 
 export function RunOvernightScanJSON(arg1): Promise<any>;
+
+export function RenameTrackStrategy(arg1,arg2): Promise<any>;

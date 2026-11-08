@@ -14,6 +14,7 @@ type TrackStrategy struct {
 	Name      string    `json:"name" gorm:"uniqueIndex;size:64"`          // 策略名（如：一夜持股/牛指T+1/竞神接力/古+一日多空/B点七日）
 	Remark    string    `json:"remark" gorm:"size:255"`                          // 备注（选股方式说明）
 	SortOrder int       `json:"sortOrder"`                                // 排序
+	Builtin   bool      `json:"builtin" gorm:"default:false"`            // v9b.3: 内置预置策略=true(不可改名/删除); 自建=false
 	CreatedAt time.Time `json:"createdAt"`
 }
 
@@ -50,6 +51,20 @@ type TrackItem struct {
 	NextClosePct float64 `json:"nextClosePct"` // 次日收盘涨幅%
 	FilledDays   int     `json:"filledDays"`   // 已回填天数（增量回填用）
 	Remark       string  `json:"remark" gorm:"size:255"`
+	// ===== v9b.3: B点式口径字段（原版表格式）=====
+	DayNetPct  float64 `json:"dayNetPct"`            // 买入日: 收/开-1
+	ClosePrice float64 `json:"closePrice"`            // 买入日收盘价
+	DayChgPct  float64 `json:"dayChgPct"`             // 买入日: 收/前收-1
+	High1Pct   float64 `json:"high1Pct"`              // 每日最高: 第N日高/前日收-1
+	High2Pct   float64 `json:"high2Pct"`
+	High3Pct   float64 `json:"high3Pct"`
+	High4Pct   float64 `json:"high4Pct"`
+	High5Pct   float64 `json:"high5Pct"`
+	High6Pct   float64 `json:"high6Pct"`
+	High7Pct   float64 `json:"high7Pct"`
+	High8Pct   float64 `json:"high8Pct"`
+	Sum3Pct    float64 `json:"sum3Pct"`               // 3日区间 = sum(单日1..3)
+	Sum7Pct    float64 `json:"sum7Pct"`               // 7日区间 = sum(单日1..7) - dayChg
 }
 
 // TrackStrategyStat 分策略统计结果（非表，仅返回结构）

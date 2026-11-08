@@ -34,10 +34,12 @@ func ensurePresetTrackStrategies() {
 	var cnt int64
 	db.Dao.Model(&models.TrackStrategy{}).Count(&cnt)
 	if cnt > 0 {
+		// v9b.3: 老库回填 Builtin 标记
+		db.Dao.Model(&models.TrackStrategy{}).Where("name IN ?", presetTrackStrategies).Update("builtin", true)
 		return
 	}
 	for i, name := range presetTrackStrategies {
-		db.Dao.Create(&models.TrackStrategy{Name: name, SortOrder: i + 1})
+		db.Dao.Create(&models.TrackStrategy{Name: name, SortOrder: i + 1, Builtin: true})
 	}
 	logger.SugaredLogger.Infof("预置策略套件完成: %v", presetTrackStrategies)
 }
@@ -74,6 +76,36 @@ func (a *App) AddTrackStrategy(name string) *models.TrackStrategy {
 }
 
 // DelTrackStrategy 删除策略（级联删批次与票，含明细防孤儿数据）
+// RenameTrackStrategy 重命名策略（v9b.3: 仅自建策略可改名；内置预置策略禁止）
+func (a *App) RenameTrackStrategy(id uint, name string) string {
+	defer PanicHandler()
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "名称不能为空"
+	}
+	var st models.TrackStrategy
+	if err := db.Dao.First(&st, id).Error; err != nil {
+		return "策略不存在"
+	}
+	if st.Builtin {
+		return "内置策略不可重命名"
+	}
+	for _, p := range presetTrackStrategies {
+		if st.Name == p {
+			return "内置策略不可重命名"
+		}
+	}
+	var cnt int64
+	db.Dao.Model(&models.TrackStrategy{}).Where("name = ? AND id != ?", name, id).Count(&cnt)
+	if cnt > 0 {
+		return "已存在同名策略"
+	}
+	if err := db.Dao.Model(&st).Update("name", name).Error; err != nil {
+		return "改名失败: " + err.Error()
+	}
+	return "OK"
+}
+
 func (a *App) DelTrackStrategy(id uint) string {
 	defer PanicHandler()
 	var batchIDs []uint
