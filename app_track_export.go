@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -66,7 +67,7 @@ func exportYiye(tplPath, outPath string, items []models.TrackItem, batch models.
 	if err != nil {
 		return err
 	}
-	f, err := excelize.OpenReader(strings.NewReader(data))
+	f, err := excelize.OpenReader(bytes.NewReader(data))
 	if err != nil {
 		return fmt.Errorf("模板打开失败: %w", err)
 	}
