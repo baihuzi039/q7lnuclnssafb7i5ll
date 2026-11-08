@@ -77,7 +77,7 @@ import {onBeforeUnmount, onMounted, ref, h} from 'vue'
 import {
   ListTrackStrategies, AddTrackStrategy, DelTrackStrategy, GetTrackBatches,
   GetRecentTrackItems, GetTrackStats, CreateTrackBatch, ImportTrackInboxFolder,
-  OpenTrackInboxDir, ExportTrackCSV, DeleteTrackBatch, DeleteTrackItem
+  OpenTrackInboxDir, ExportTrackCSV, ExportTrackExcel, DeleteTrackBatch, DeleteTrackItem
 } from '../../wailsjs/go/main/App'
 import {EventsOn, EventsOff} from '../../wailsjs/runtime'
 
@@ -103,6 +103,21 @@ const batchColumns = [
   mkCol('批次日期', 'tradeDate', 110),
   mkCol('来源', 'source', 70),
   h('备注', 'remark'),
+  {
+    title: '操作', key: 'op', width: 150,
+    render(row) {
+      return h('div', null, [
+        h('a', {
+          style: 'color:#63e2b7;cursor:pointer;margin-right:12px',
+          onClick: () => exportExcel(row)
+        }, '导出Excel'),
+        h('a', {
+          style: 'color:#e88080;cursor:pointer',
+          onClick: () => delBatch(row)
+        }, '删除')
+      ])
+    }
+  },
 ]
 
 const itemColumns = [
@@ -215,6 +230,22 @@ function createBatch() {
 
 function delItem(row) {
   DeleteTrackItem(row.id).then(() => { refresh() })
+}
+
+// 按原版模板导出该批次为Excel（需模板文件 data/templates/<策略名>.xlsx）
+function exportExcel(row) {
+  const sid = Number(activeStrategy.value)
+  ExportTrackExcel(sid, row.id).then((res) => {
+    const msg = res || ''
+    if (msg.includes('export') && msg.includes('.xlsx')) {
+      window.$message ? window.$message.success('已导出: ' + msg, {duration: 6000}) : alert('已导出: ' + msg)
+    } else {
+      window.$message ? window.$message.warning(msg, {duration: 8000}) : alert(msg)
+    }
+  }).catch((e) => {
+    const msg = '导出失败: ' + (e && e.message ? e.message : e)
+    window.$message ? window.$message.error(msg, {duration: 8000}) : alert(msg)
+  })
 }
 
 function onBatchCheck(keys) {

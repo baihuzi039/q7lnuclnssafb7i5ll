@@ -846,3 +846,5 @@ export function ExportTrackCSV(arg1): Promise<any>;
 export function DeleteTrackBatch(arg1): Promise<any>;
 
 export function DeleteTrackItem(arg1): Promise<any>;
+
+export function ExportTrackExcel(arg1,arg2): Promise<any>;

@@ -1681,3 +1681,7 @@ export function DeleteTrackBatch(arg1) {
 export function DeleteTrackItem(arg1) {
   return window['go']['main']['App']['DeleteTrackItem'](arg1);
 }
+
+export function ExportTrackExcel(arg1,arg2) {
+  return window['go']['main']['App']['ExportTrackExcel'](arg1,arg2);
+}
