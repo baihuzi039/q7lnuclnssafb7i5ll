@@ -1,5 +1,4 @@
-// [local-patch] v9c.5 (2026-11-09) — 数据管理板块重建：从v5数据层覆盖包v6考古恢复本文件。
-// [v9c.5.1] CI编译修复：OpenDirectoryDialog改用OpenDialogOptions结构体（wails v2新版要求）；竞价快照res.Result判空改为res.Code!=0/len(Data)==0（Result为匿名结构体非指针，不可与nil比较）。
+// [local-patch] v9c.5.2 (2026-11-09) — 数据管理板块升级到v8b最新版：分市场统计（沪深A股/北交所/ETF/异常代码）、同步进度封顶100%防虚高、上次同步高亮chip、竞价记录合并条/天展示。CI编译修复：OpenDirectoryDialog改用OpenDialogOptions结构体（wails v2新版要求）。
 
 package main
 
@@ -73,7 +72,20 @@ func syncDailyKLineJob(ctx context.Context) {
 
 	// 待同步列表：本地缺失 或 落后于全局最新交易日
 	var targets []data.StockBasic
+	isEtf := func(symbol string) bool {
+		if len(symbol) < 2 {
+			return false
+		}
+		switch symbol[:2] {
+		case "15", "16", "50", "51", "52", "53", "56", "58":
+			return true
+		}
+		return false
+	}
 	for _, b := range basics {
+		if isEtf(b.Symbol) {
+			continue // ETF/LOF 不拉日线（回测用不到，白耗接口配额）
+		}
 		if d, ok := stockLatest[b.TsCode]; ok && globalLatest != "" && d >= globalLatest {
 			continue
 		}
@@ -196,7 +208,7 @@ func fileSize(p string) int64 {
 // SelectDirectory 弹出系统文件夹选择框
 func (a *App) SelectDirectory() string {
 	defer PanicHandler()
-	dir, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{Title: "选择通达信日线数据文件夹（内含 .day 文件）"})
+	dir, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{Title: "选择通达信日线数据文件夹"})
 	if err != nil || dir == "" {
 		return ""
 	}
@@ -216,14 +228,44 @@ func (a *App) SyncDailyKLineNow() string {
 	return "日线同步已启动，全市场首次约需 10-20 分钟，可在本页刷新状态查看进度"
 }
 
-// GetDailyKLineSyncStatus 查询日线库状态
+// GetDailyKLineSyncStatus 查询日线库状态（分类计数：A股股票/ETF/其他，避免把基金债券算进股票数）
 func (a *App) GetDailyKLineSyncStatus() models.DailyKLineSyncStatus {
 	defer PanicHandler()
 	st := models.DailyKLineSyncStatus{Running: klineSyncRunning.Load()}
 	if v, ok := klineLastSyncTime.Load().(string); ok {
 		st.LastSyncTime = v
 	}
-	db.Dao.Model(&data.StockBasic{}).Count(&st.TotalStocks)
+	// 分类统计基础表：A股股票(60/00/30/68/8/4开头，排除ETF 51/56/58/15/16/50等) vs ETF
+	type cnt struct {
+		Category string
+		N        int64
+	}
+	var cs []cnt
+	// ts_code 形如 600519.SH / 000001.SZ / 833171.BJ / 510300.SH(ETF)，
+	// symbol 字段在部分历史数据里可能为空，故统一用 ts_code 前缀判断；
+	// 已退市股（list_status=D/P）不纳入分类展示，避免干扰总数
+	db.Dao.Raw(`SELECT CASE
+		WHEN substr(ts_code,1,2) IN ('51','52','53','56','58','15','16','50','11','12','13') THEN 'etf'
+		WHEN substr(ts_code,1,2) IN ('60','00','30','68') THEN 'astock'
+		WHEN substr(ts_code,1,1) IN ('8','4') THEN 'bj'
+		ELSE 'other' END as category, count(*) as n
+		FROM tushare_stock_basic
+		WHERE list_status = 'L' OR list_status = '' OR list_status IS NULL
+		GROUP BY category`).Scan(&cs)
+	for _, c := range cs {
+		switch c.Category {
+		case "astock":
+			st.TotalAStock = c.N
+		case "etf":
+			st.TotalEtf = c.N
+		case "bj":
+			st.TotalBJ = c.N
+		case "other":
+			st.TotalOther = c.N
+		}
+	}
+	st.TotalStocks = st.TotalAStock + st.TotalBJ // 进度分母只算沪深A股+北交所股票
+	// ETF与日线无关，不参与日线同步，不计入分母；other为异常数据展示用
 	db.Dao.Model(&models.DailyKLine{}).Count(&st.TotalRows)
 	db.Dao.Model(&models.DailyKLine{}).Distinct("stock_code").Count(&st.SyncedStocks)
 	if st.TotalRows > 0 {

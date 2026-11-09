@@ -2,22 +2,29 @@
   <n-layout style="padding: 10px;">
     <n-card title="本地日线数据库" size="small" style="margin-bottom: 10px;">
       <n-space vertical size="large">
-        <n-space :size="30">
-          <n-statistic label="股票总数" :value="status.totalStocks || 0" />
-          <n-statistic label="已同步股票" :value="status.syncedStocks || 0" />
+        <n-space :size="24">
+          <n-statistic label="沪深A股" :value="status.totalAStock || 0" />
+          <n-statistic label="北交所" :value="status.totalBJ || 0" />
+          <n-statistic label="场内ETF" :value="status.totalEtf || 0" />
+        </n-space>
+        <n-space :size="24" align="center">
+          <n-statistic label="已同步" :value="status.syncedStocks || 0" />
           <n-statistic label="日线总行数" :value="status.totalRows || 0" />
           <n-statistic label="最新交易日">
             <template #default>{{ status.latestDay || '-' }}</template>
           </n-statistic>
-          <n-statistic label="上次同步">
-            <template #default>{{ status.lastSyncTime || '本次运行尚未同步' }}</template>
-          </n-statistic>
-          <n-statistic label="竞价记录">
-            <template #default>{{ auctionStat.rows || 0 }} 条 / {{ auctionStat.days || 0 }} 天</template>
-          </n-statistic>
+          <div class="last-sync-chip">
+            <div class="last-sync-label">上次同步</div>
+            <div class="last-sync-value">{{ status.lastSyncTime || '本次运行尚未同步' }}</div>
+          </div>
+        </n-space>
+        <n-space :size="24">
+          <n-statistic label="竞价记录" :value="auctionStat.rows || 0" />
+          <n-statistic label="竞价天数" :value="auctionStat.days || 0" />
           <n-statistic label="竞价最新日">
             <template #default>{{ auctionStat.latest || '-' }}</template>
           </n-statistic>
+          <n-statistic v-if="status.totalOther > 0" label="异常代码" :value="status.totalOther" />
         </n-space>
         <n-space>
           <n-button size="small" type="primary" ghost :loading="status.running" @click="syncNow">
@@ -34,11 +41,14 @@
           <n-button size="small" @click="loadStatus">刷新状态</n-button>
         </n-space>
         <n-text depth="3" style="font-size: 12px;">
-          说明：软件会在每个工作日 17:40 自动增量同步全市场日线，启动后 2 分钟也会补跑一次。
-          同步数据供回测与选股使用，不发网络请求、不消耗 AI 额度。首次同步全市场约需 10-20 分钟。
+          说明：进度条 = 已同步 ÷（沪深A股+北交所），ETF与退市代码拉不到日线属正常，不计入分母。
+          软件会在每个工作日 17:40 自动增量同步，启动后 2 分钟也会补跑一次。数据供回测与选股使用，零 AI 消耗。
         </n-text>
         <n-progress v-if="status.totalStocks > 0" type="line"
-                    :percentage="syncPercent" indicator-placement="inside" processing />
+                    :percentage="syncPercent" :status="syncPercent >= 100 ? 'success' : 'default'" indicator-placement="inside" />
+        <n-text depth="3" style="font-size: 12px;">
+          数据覆盖 {{ status.syncedStocks || 0 }} 只代码（含已退市），当前在市同步目标 {{ status.totalStocks || 0 }} 只（沪深A股+北交所）。
+        </n-text>
       </n-space>
     </n-card>
 
@@ -80,8 +90,9 @@ const queryCode = ref('')
 const klineRows = ref([])
 
 const syncPercent = computed(() => {
+  // 已同步含历史退市代码，可能大于在市目标数，封顶100%防虚高
   if (!status.value.totalStocks) return 0
-  return Math.round((status.value.syncedStocks || 0) / status.value.totalStocks * 100)
+  return Math.min(100, Math.round((status.value.syncedStocks || 0) / status.value.totalStocks * 100))
 })
 
 const klineColumns = [
@@ -195,3 +206,23 @@ onMounted(() => {
 })
 onBeforeUnmount(() => { EventsOff('dailyKLineSyncDone') })
 </script>
+
+<style scoped>
+.last-sync-chip {
+  padding: 8px 16px;
+  border-radius: 8px;
+  background: rgba(24, 160, 88, 0.12);
+  border: 1px solid rgba(24, 160, 88, 0.35);
+  text-align: center;
+}
+.last-sync-label {
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.82);
+}
+.last-sync-value {
+  font-size: 24px;
+  font-weight: 600;
+  color: #63e2b7;
+  white-space: nowrap;
+}
+</style>
