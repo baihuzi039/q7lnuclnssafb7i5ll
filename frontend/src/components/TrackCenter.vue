@@ -42,15 +42,15 @@
         <n-space>
           <n-button size="small" type="primary" ghost @click="showAddBatch = true">新建批次</n-button>
           <template v-if="isOvernightTab">
-            <n-date-picker v-model:value="overnightDateTs" type="date" size="small" style="width: 150px"
+            <n-date-picker v-model:value="overnightDateTs" type="date" size="small" style="width: 150px" to="body"
                            :is-date-disabled="disableFutureDates" placeholder="选股日期" />
             <n-button size="small" type="error" ghost :loading="overnightLoading" @click="runOvernight">一夜选股(14:50后)</n-button>
             <n-button size="small" type="warning" ghost :loading="overnightCloseLoading" @click="runOvernightClose">收盘记录</n-button>
           </template>
           <template v-else-if="isNiuZhiTab">
-            <n-date-picker v-model:value="niuzhiDateTs" type="date" size="small" style="width: 150px"
+            <n-date-picker v-model:value="niuzhiDateTs" type="date" size="small" style="width: 150px" to="body"
                            :is-date-disabled="disableFutureDates" placeholder="选股日期" />
-            <n-select v-model:value="niuzhiMode" size="small" style="width: 100px"
+            <n-select v-model:value="niuzhiMode" size="small" style="width: 100px" to="body"
                       :options="[{label:'严选',value:'严选'},{label:'标准',value:'标准'},{label:'全勤',value:'全勤'}]" />
             <n-button size="small" type="error" ghost :loading="niuzhiLoading" @click="runNiuZhi">牛指选股(收盘后)</n-button>
           </template>
