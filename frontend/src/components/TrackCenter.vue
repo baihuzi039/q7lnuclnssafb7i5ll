@@ -126,7 +126,7 @@
         </n-alert>
         <n-data-table v-if="overnightModalTitle.startsWith('牛指') && niuzhiScan && niuzhiScan.cands && niuzhiScan.cands.length"
                       size="small" max-height="360" :columns="niuzhiCandColumns"
-                      :data="niuzhiScan.cands.map((c, i) => ({
+                      :data="niuzhiScan.cands.filter(c => niuzhiMode === '全勤' || (niuzhiMode === '严选' ? c.score >= 3 : c.score >= 2)).map((c, i) => ({
                         idx: i + 1, code: c.code, name: c.name, price: c.price, chg: c.chg,
                         score: c.score, dd60: c.dd60, shrink: c.volShrink ? '是' : '否',
                         amtYi: c.amtYi, posFinal: c.posFinal + '%', topTag: c.topTag || ''
