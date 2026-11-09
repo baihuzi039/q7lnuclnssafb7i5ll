@@ -888,3 +888,9 @@ export function SetAutoPickSettings(arg1:boolean,arg2:string): Promise<string>;
 export function GetAutoPickSettingsJSON(): Promise<any>;
 
 export function RunAutoPickNow(): Promise<string>;
+
+export function FenshiScanCandidates(): Promise<Array<any>>;
+
+export function FenshiAnalyzeStock(arg1:string): Promise<any>;
+
+export function FenshiHotBoards(): Promise<Array<any>>;

@@ -1765,3 +1765,15 @@ export function GetAutoPickSettingsJSON() {
 export function RunAutoPickNow() {
   return window['go']['main']['App']['RunAutoPickNow']();
 }
+
+export function FenshiScanCandidates() {
+  return window['go']['main']['App']['FenshiScanCandidates']();
+}
+
+export function FenshiAnalyzeStock(arg1) {
+  return window['go']['main']['App']['FenshiAnalyzeStock'](arg1);
+}
+
+export function FenshiHotBoards() {
+  return window['go']['main']['App']['FenshiHotBoards']();
+}

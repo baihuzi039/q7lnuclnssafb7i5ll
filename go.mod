@@ -41,6 +41,7 @@ require (
 	github.com/lib4u/fake-useragent v1.0.6
 	github.com/mark3labs/mcp-go v1.1.1
 	github.com/philippgille/chromem-go v0.7.0
+	github.com/refraction-networking/utls v1.8.2
 	github.com/robertkrimen/otto v0.5.1
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/samber/lo v1.53.0
@@ -69,6 +70,7 @@ require (
 	cloud.google.com/go/compute/metadata v0.9.0 // indirect
 	git.sr.ht/~jackmordaunt/go-toast v1.1.2 // indirect
 	git.sr.ht/~jackmordaunt/go-toast/v2 v2.0.3 // indirect
+	github.com/andybalholm/brotli v1.0.6 // indirect
 	github.com/andybalholm/cascadia v1.3.4 // indirect
 	github.com/anthropics/anthropic-sdk-go v1.56.0 // indirect
 	github.com/aws/aws-sdk-go-v2 v1.42.0 // indirect

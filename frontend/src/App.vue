@@ -681,6 +681,21 @@ const menuOptions = ref([
         h(
             RouterLink,
             {
+              to: {name: 'fenshiCenter'},
+              onClick: () => {
+                activeKey.value = 'fenshiCenter'
+              },
+            },
+            {default: () => '分时辅助'}
+        ),
+    key: 'fenshiCenter',
+    icon: renderIcon(Pulse),
+  },
+  {
+    label: () =>
+        h(
+            RouterLink,
+            {
               to: {name: 'contracts'},
               onClick: () => {
                 activeKey.value = 'contracts'
