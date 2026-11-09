@@ -47,6 +47,13 @@
             <n-button size="small" type="error" ghost :loading="overnightLoading" @click="runOvernight">一夜选股(14:50后)</n-button>
             <n-button size="small" type="warning" ghost :loading="overnightCloseLoading" @click="runOvernightClose">收盘记录</n-button>
           </template>
+          <template v-else-if="isNiuZhiTab">
+            <n-date-picker v-model:value="niuzhiDateTs" type="date" size="small" style="width: 150px"
+                           :is-date-disabled="disableFutureDates" placeholder="选股日期" />
+            <n-select v-model:value="niuzhiMode" size="small" style="width: 100px"
+                      :options="[{label:'严选',value:'严选'},{label:'标准',value:'标准'},{label:'全勤',value:'全勤'}]" />
+            <n-button size="small" type="error" ghost :loading="niuzhiLoading" @click="runNiuZhi">牛指选股(收盘后)</n-button>
+          </template>
           <template v-else-if="activeIsCustom">
             <n-tooltip trigger="hover"><template #trigger><n-button size="small" type="error" ghost disabled>选股(待接入)</n-button></template>该自建策略的选股逻辑待接入，先用「新建批次/扫描收件箱导入」加自选股</n-tooltip>
           </template>
@@ -114,10 +121,18 @@
     <!-- 一夜选股/收盘记录结果弹窗 -->
     <n-modal v-model:show="showOvernightModal" :title="overnightModalTitle" preset="card" style="width: 760px;">
       <n-space vertical>
-        <n-alert :type="overnightScan && overnightScan.weakDay ? 'warning' : 'info'" :bordered="false">
-          {{ overnightScan ? overnightScan.note : '' }}
+        <n-alert :type="(overnightModalTitle.startsWith('牛指') ? niuzhiScan : overnightScan)?.weakDay ? 'warning' : 'info'" :bordered="false">
+          {{ (overnightModalTitle.startsWith('牛指') ? niuzhiScan : overnightScan)?.note || '' }}
         </n-alert>
-        <n-data-table v-if="overnightScan && overnightScan.cands && overnightScan.cands.length"
+        <n-data-table v-if="overnightModalTitle.startsWith('牛指') && niuzhiScan && niuzhiScan.cands && niuzhiScan.cands.length"
+                      size="small" max-height="360" :columns="niuzhiCandColumns"
+                      :data="niuzhiScan.cands.map((c, i) => ({
+                        idx: i + 1, code: c.code, name: c.name, price: c.price, chg: c.chg,
+                        score: c.score, dd60: c.dd60, shrink: c.volShrink ? '是' : '否',
+                        amtYi: c.amtYi, posFinal: c.posFinal + '%', topTag: c.topTag || ''
+                      }))" />
+        <n-empty v-else-if="overnightModalTitle.startsWith('牛指') && niuzhiScan && niuzhiScan.trading" description="无信号" />
+        <n-data-table v-else-if="overnightScan && overnightScan.cands && overnightScan.cands.length"
                       size="small" max-height="360" :columns="overnightCandColumns"
                       :data="overnightScan.cands.slice(0, 8).map((c, i) => ({
                         idx: i + 1, code: c.code, name: c.name, price: c.price,
@@ -138,7 +153,8 @@ import {
   GetRecentTrackItems, GetTrackStats, CreateTrackBatch, ImportTrackInboxFolder,
   OpenTrackInboxDir, ExportTrackCSV, ExportTrackExcel, DeleteTrackBatch, DeleteTrackItem,
   RenameTrackStrategy,
-  RunOvernightScan, RunOvernightAppendCloseSheet, RunOvernightScanJSON
+  RunOvernightScan, RunOvernightAppendCloseSheet, RunOvernightScanJSON,
+  RunNiuZhiScanJSON
 } from '../../wailsjs/go/main/App'
 import {EventsOn, EventsOff} from '../../wailsjs/runtime'
 
@@ -237,6 +253,29 @@ const isOvernightTab = computed(() => {
   const s = strategies.value.find(x => String(x.id) === activeStrategy.value)
   return !!s && /一夜/.test(s.name || '')
 })
+// v9c: 牛指T+1专属选股(日期+三模式)
+const niuzhiLoading = ref(false)
+const niuzhiDateTs = ref(Date.now())
+const niuzhiMode = ref('标准')
+const niuzhiScan = ref(null)
+const isNiuZhiTab = computed(() => {
+  const s = strategies.value.find(x => String(x.id) === activeStrategy.value)
+  return !!s && /牛指/.test(s.name || '')
+})
+function runNiuZhi() {
+  niuzhiLoading.value = true
+  RunNiuZhiScanJSON(fmtDay(niuzhiDateTs.value), niuzhiMode.value).then((res) => {
+    niuzhiLoading.value = false
+    niuzhiScan.value = res || null
+    overnightModalTitle.value = '牛指选股结果 (' + fmtDay(niuzhiDateTs.value) + ' · ' + niuzhiMode.value + ')'
+    showOvernightModal.value = true
+  }).catch((e) => {
+    niuzhiLoading.value = false
+    overnightModalTitle.value = '牛指选股结果'
+    niuzhiScan.value = { trading: false, note: '失败: ' + e, cands: [] }
+    showOvernightModal.value = true
+  })
+}
 
 function disableFutureDates(ts) { return ts > Date.now() }
 
@@ -277,6 +316,19 @@ function runOvernightClose() {
   })
 }
 
+const niuzhiCandColumns = [
+  { title: '#', key: 'idx', width: 40 },
+  { title: '代码', key: 'code', width: 80 },
+  { title: '名称', key: 'name', width: 100 },
+  { title: '现价', key: 'price', width: 70 },
+  { title: '涨幅%', key: 'chg', width: 70 },
+  { title: '评分', key: 'score', width: 55 },
+  { title: '60日回撤%', key: 'dd60', width: 85 },
+  { title: '缩量', key: 'shrink', width: 60 },
+  { title: '成交额亿', key: 'amtYi', width: 75 },
+  { title: '建议仓', key: 'posFinal', width: 70 },
+  { title: '标记', key: 'topTag', width: 60 }
+]
 const overnightCandColumns = [
   { title: '#', key: 'idx', width: 40 },
   { title: '代码', key: 'code', width: 80 },

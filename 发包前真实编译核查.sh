@@ -15,10 +15,10 @@ if [ ! -x /tmp/go124/bin/go ]; then
   curl -sL -o /tmp/go.tgz https://golang.google.cn/dl/go1.24.10.linux-amd64.tar.gz --max-time 55
   mkdir -p /tmp/go124 && tar xzf /tmp/go.tgz -C /tmp/go124 --strip-components=1
 fi
-export PATH=/tmp/go124/bin:$PATH GOCACHE=/tmp/gocache5 GOTOOLCHAIN=local GOPROXY=https://goproxy.cn,direct GOROOT=/tmp/go124
+export PATH=/tmp/go124/bin:$PATH GOCACHE=/tmp/gocache5 GOTOOLCHAIN=auto GOPROXY=https://goproxy.cn,direct GOROOT=/tmp/go124
 
 # 同步最新改动文件到typecheck环境（并做本地适配patch）
-for f in app_track.go app_track_stats.go app_track_export.go app_track_overnight.go; do
+for f in app_track.go app_track_stats.go app_track_export.go app_track_overnight.go app_track_niuzhi.go; do
   [ "$f" = "app_track.go" ] && cp "$WS/backend/models/track.go" "$TC/models/track.go" 2>/dev/null
   [ -f "$WS/$f" ] && cp "$WS/$f" "$TC/$f"
 done
@@ -26,7 +26,7 @@ cd "$TC"
 # patch：包名/import适配（python处理，幂等）
 python3 - <<'PYEOF'
 import re
-for fp in ['app_track.go','app_track_stats.go','app_track_export.go','app_track_overnight.go']:
+for fp in ['app_track.go','app_track_stats.go','app_track_export.go','app_track_overnight.go','app_track_niuzhi.go']:
     t=open(fp,encoding='utf-8').read()
     t=re.sub(r'^package \w+','package main',t,count=1,flags=re.M)
     t=t.replace('"go-stock/backend/models"','"typecheck/models"').replace("go-stock/backend/db","typecheck/db").replace("go-stock/backend/data","typecheck/data").replace('"go-stock/backend/logger"','"typecheck/logger"')

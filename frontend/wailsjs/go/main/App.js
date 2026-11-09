@@ -1709,3 +1709,7 @@ export function RunOvernightScanJSON(arg1) {
 export function RenameTrackStrategy(arg1,arg2) {
   return window['go']['main']['App']['RenameTrackStrategy'](arg1,arg2);
 }
+
+export function RunNiuZhiScanJSON(arg1, arg2) {
+  return window['go']['main']['App']['RunNiuZhiScanJSON'](arg1, arg2);
+}
