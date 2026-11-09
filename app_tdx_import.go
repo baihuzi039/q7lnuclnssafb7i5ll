@@ -1,3 +1,4 @@
+// [local-patch] v9c.5 (2026-11-09) — 数据管理板块重建：从v5数据层覆盖包v6考古恢复本文件。
 package main
 
 // [local-patch] app_tdx_import.go — 通达信 .day 日线数据包导入器。

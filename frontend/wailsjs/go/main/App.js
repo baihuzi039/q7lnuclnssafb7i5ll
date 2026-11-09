@@ -1713,3 +1713,43 @@ export function RenameTrackStrategy(arg1,arg2) {
 export function RunNiuZhiScanJSON(arg1, arg2) {
   return window['go']['main']['App']['RunNiuZhiScanJSON'](arg1, arg2);
 }
+
+export function SyncDailyKLineNow() {
+  return window['go']['main']['App']['SyncDailyKLineNow']();
+}
+
+export function GetDailyKLineSyncStatus() {
+  return window['go']['main']['App']['GetDailyKLineSyncStatus']();
+}
+
+export function GetLocalDailyKLine(arg1,arg2) {
+  return window['go']['main']['App']['GetLocalDailyKLine'](arg1,arg2);
+}
+
+export function ExportDatabaseBackup() {
+  return window['go']['main']['App']['ExportDatabaseBackup']();
+}
+
+export function SelectDirectory() {
+  return window['go']['main']['App']['SelectDirectory']();
+}
+
+export function ExportDataCSV(arg1) {
+  return window['go']['main']['App']['ExportDataCSV'](arg1);
+}
+
+export function ImportAuctionCSV(arg1) {
+  return window['go']['main']['App']['ImportAuctionCSV'](arg1);
+}
+
+export function SnapshotAuctionNow() {
+  return window['go']['main']['App']['SnapshotAuctionNow']();
+}
+
+export function GetAuctionCount() {
+  return window['go']['main']['App']['GetAuctionCount']();
+}
+
+export function ImportTdxDayFolder(arg1) {
+  return window['go']['main']['App']['ImportTdxDayFolder'](arg1);
+}

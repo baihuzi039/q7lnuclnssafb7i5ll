@@ -862,3 +862,23 @@ export function RunOvernightScanJSON(arg1): Promise<any>;
 export function RenameTrackStrategy(arg1,arg2): Promise<any>;
 
 export function RunNiuZhiScanJSON(arg1, arg2): Promise<any>;
+
+export function SyncDailyKLineNow(): Promise<string>;
+
+export function GetDailyKLineSyncStatus(): Promise<any>;
+
+export function GetLocalDailyKLine(arg1:string,arg2:number): Promise<any>;
+
+export function ExportDatabaseBackup(): Promise<string>;
+
+export function SelectDirectory(): Promise<string>;
+
+export function ExportDataCSV(arg1:any): Promise<string>;
+
+export function ImportAuctionCSV(arg1:Array<string>): Promise<string>;
+
+export function SnapshotAuctionNow(): Promise<string>;
+
+export function GetAuctionCount(): Promise<any>;
+
+export function ImportTdxDayFolder(arg1:Array<string>): Promise<string>;

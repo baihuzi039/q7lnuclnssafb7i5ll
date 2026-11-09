@@ -1,3 +1,4 @@
+// [local-patch] v9c.5 (2026-11-09) — 数据管理板块重建：从v5数据层覆盖包v6考古恢复本文件，内容与v6版一致（仅本头注释新增）。
 package main
 
 // [local-patch] app_auction.go — 集合竞价数据：CSV 导入（历史） + 每日 9:26 快照抓取（增量）。
@@ -172,7 +173,7 @@ func (a *App) doSnapshotAuction() {
 	saved := 0
 	for page := 1; page <= 3; page++ {
 		res := api.GetAllStocks(page, 3000, "", models.TechnicalIndicators{})
-		if res == nil {
+		if res == nil || res.Result == nil {
 			continue
 		}
 		rows := make([]models.DailyAuction, 0, len(res.Result.Data))

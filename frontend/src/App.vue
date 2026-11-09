@@ -863,6 +863,24 @@ const menuOptions = ref([
             RouterLink,
             {
               to: {
+                name: 'dataManage',
+                params: {},
+              },
+              onClick: () => {
+                activeKey.value = 'dataManage'
+              },
+            },
+            {default: () => '数据管理'}
+        ),
+    key: 'dataManage',
+    icon: renderIcon(ServerOutline),
+  },
+  {
+    label: () =>
+        h(
+            RouterLink,
+            {
+              to: {
                 name: 'agent',
                 query: {
                   name:"Ai智能体",
