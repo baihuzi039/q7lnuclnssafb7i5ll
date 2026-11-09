@@ -15,7 +15,7 @@
           </n-statistic>
           <div class="last-sync-chip">
             <div class="last-sync-label">上次同步</div>
-            <div class="last-sync-value">{{ status.lastSyncTime || '本次运行尚未同步' }}</div>
+            <div class="last-sync-value">{{ status.lastSyncTime || (status.latestDay ? '未记录（库内最新 ' + status.latestDay + '）' : '本次运行尚未同步') }}</div>
           </div>
         </n-space>
         <n-space :size="24">
@@ -70,7 +70,7 @@
       <n-space>
         <n-input v-model:value="queryCode" size="small" placeholder="股票代码，如 600519.SH"
                  style="width: 220px;" @keyup.enter="queryKLine" />
-        <n-button size="small" type="primary" ghost @click="queryKLine">查询</n-button>
+        <n-button size="small" type="primary" ghost :loading="klineLoading" @click="queryKLine">查询</n-button>
       </n-space>
       <n-data-table size="small" style="margin-top: 10px;" max-height="420"
                     :columns="klineColumns" :data="klineRows" :pagination="{pageSize: 20}" />
@@ -80,7 +80,7 @@
 
 <script setup>
 import {computed, h, onBeforeUnmount, onMounted, ref} from 'vue'
-import {GetDailyKLineSyncStatus, GetLocalDailyKLine, SyncDailyKLineNow, ImportTdxDayFolder, ExportDatabaseBackup, ExportDataCSV, ImportAuctionCSV, SnapshotAuctionNow, GetAuctionCount}
+import {GetDailyKLineSyncStatus, GetLocalDailyKLine, SyncDailyKLineNow, ImportTdxDayFolder, ExportDatabaseBackup, ExportDataCSV, ImportAuctionCSV, SnapshotAuctionNow, GetAuctionCount, FetchSingleStockKLine}
   from '../../wailsjs/go/main/App'
 import {EventsOn, EventsOff} from '../../wailsjs/runtime'
 import {SelectDirectory} from '../../wailsjs/go/main/App'
@@ -88,6 +88,7 @@ import {SelectDirectory} from '../../wailsjs/go/main/App'
 const status = ref({})
 const queryCode = ref('')
 const klineRows = ref([])
+const klineLoading = ref(false)
 
 const syncPercent = computed(() => {
   // 已同步含历史退市代码，可能大于在市目标数，封顶100%防虚高
@@ -195,7 +196,25 @@ function queryKLine() {
   if (/^\d{6}$/.test(code)) {
     code = code.startsWith('6') ? code + '.SH' : code + '.SZ'
   }
-  GetLocalDailyKLine(code, 120).then((rows) => { klineRows.value = rows || [] })
+  klineLoading.value = true
+  GetLocalDailyKLine(code, 120).then((rows) => {
+    klineRows.value = rows || []
+    if (!rows || rows.length < 120) {
+      // v9e.5：本地K线不足时自动联网补抓250个交易日入库后重新查询
+      if (window.$message) window.$message.info('本地K线不足 ' + (rows ? rows.length : 0) + ' 根，正在联网补抓约250个交易日...')
+      FetchSingleStockKLine(code, 250).then((n) => {
+        if (n > 0) {
+          if (window.$message) window.$message.success('已补抓 ' + n + ' 根日K')
+          return GetLocalDailyKLine(code, 120).then((r) => { klineRows.value = r || [] })
+        }
+        if (window.$message) window.$message.warning('联网补抓失败，仅显示本地已有数据')
+      }).catch(() => {
+        if (window.$message) window.$message.warning('联网补抓失败，仅显示本地已有数据')
+      }).finally(() => { klineLoading.value = false })
+    } else {
+      klineLoading.value = false
+    }
+  })
 }
 
 onMounted(() => {

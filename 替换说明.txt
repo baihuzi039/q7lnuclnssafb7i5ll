@@ -1,18 +1,20 @@
-替换说明（v9e.6）
+替换说明（v9e.6.1 平铺直覆版）
 ================================================
-本次改动点：
-1. 【VIP解锁回归】v9c.5.2升级v8b时把4处VIP解锁补丁弄丢了，本次全部打回：
-   - App.vue：K线分析菜单入口免VIP2校验
-   - stock.vue：个股页多周期K线免VIP2校验
-   - allStockList.vue：多周期K线免校验 + 无赞助码不重置列表
-2. 【数据管理三修】（v9e.5已含，一并交付防遗漏）：
-   - 同步时间：无记录时显示"未记录（库内最新 YYYY-MM-DD）"兜底
-   - 竞价快照：点按钮立即同步判断，必弹提示（非交易日/今日已存在N条）
-   - 个股K线：本地不足120根自动联网补抓约250根入库后刷新
-3. 【自动同步深度】每次同步拉取量 40根→250根（v9e.5.1）
+本包与v9e.6内容相同，只是结构改为平铺：解压后直接就是8个文件（无go-stock文件夹套层）。
 
-解压后整个 go-stock 文件夹拖进项目根覆盖合并：
-你下一步 → 8个文件替换 → Commit → tag v9e.6-track-release → Push 看 CI → 装机
+操作：把本zip解压到你项目的根目录（就是能看到 frontend、docs、scripts 文件夹的那一层），
+选"解压到当前文件夹/覆盖"，8个文件直接落位覆盖。然后删掉仓库根目录下多出来的 替换说明.txt
+（或者不删也行，别勾选它提交）。
 
-tag（单独复制这一行）：
-v9e.6-track-release
+Commit 前自检：GitHub Desktop 的 Changes 里必须出现以下 8 个文件：
+  frontend/src/App.vue
+  frontend/src/components/stock.vue
+  frontend/src/components/allStockList.vue
+  frontend/src/components/DataManage.vue
+  frontend/wailsjs/go/main/App.js
+  frontend/wailsjs/go/main/App.d.ts
+  app_daily_kline.go
+  app_auction.go
+如果只看到 替换说明.txt 一个文件 = 解压位置不对，停下来告诉我。
+
+本次内容：VIP解锁4处回归 + 同步时间兜底 + 竞价必弹提示 + K线自动补抓 + 同步深度250根。

@@ -111,7 +111,6 @@ async function showMultiKline(row) {
     return
   }
   // [local-patch] 解锁多周期K线
-  // await refreshEffectiveVip()
   if (false) {
     message.warning('多周期 K 线仅限 VIP2 及以上用户使用，您当前权限不足')
     return

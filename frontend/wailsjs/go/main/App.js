@@ -1765,3 +1765,7 @@ export function GetAutoPickSettingsJSON() {
 export function RunAutoPickNow() {
   return window['go']['main']['App']['RunAutoPickNow']();
 }
+
+export function FetchSingleStockKLine(arg1:string, arg2:number) {
+  return window['go']['main']['App']['FetchSingleStockKLine'](arg1, arg2);
+}

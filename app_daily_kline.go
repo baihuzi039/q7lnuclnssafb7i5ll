@@ -7,12 +7,12 @@ package main
 
 import (
 	"context"
-	"strings"
 	"encoding/csv"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -53,7 +53,8 @@ func klineLastSyncLoad() string {
 
 // syncDailyKLineJob 全市场日线增量同步（后台任务）：
 //  1. 读取股票基础表（StockBasic，已有每日自动更新机制）拿到全市场代码
-//  2. 对每只股票：本地已有"全局最新交易日"数据的跳过；否则拉最近 40 根日K入库（OnConflict DoNothing）
+//  2. 对每只股票：本地已有"全局最新交易日"数据的跳过；否则拉最近 250 根日K入库（OnConflict DoNothing）
+//     v9e.5.1：原为40根，导致首次同步的股票本地只有40根、个股K线查询120根不够（用户反馈根因）
 //  3. 4 并发 + 每次请求间隔 50ms，避免触发接口限流
 func syncDailyKLineJob(ctx context.Context) {
 	defer PanicHandler()
@@ -126,7 +127,7 @@ func syncDailyKLineJob(ctx context.Context) {
 		go func(code, name string) {
 			defer wg.Done()
 			defer func() { <-sem }()
-			n := upsertDailyKLine(code, name, 40)
+			n := upsertDailyKLine(code, name, 250)
 			if n > 0 {
 				okCount.Add(1)
 				rowSum.Add(int64(n))
@@ -242,7 +243,7 @@ func (a *App) SyncDailyKLineNow() string {
 	}
 	klineSyncRunning.Store(false)
 	go func() {
-			syncDailyKLineJob(a.ctx) // job 内部有原子锁防并发
+		syncDailyKLineJob(a.ctx) // job 内部有原子锁防并发
 		runtime.EventsEmit(a.ctx, "dailyKLineSyncDone", time.Now().Format("2006-01-02 15:04:05"))
 	}()
 	return "日线同步已启动，全市场首次约需 10-20 分钟，可在本页刷新状态查看进度"
@@ -292,6 +293,23 @@ func (a *App) GetDailyKLineSyncStatus() models.DailyKLineSyncStatus {
 		db.Dao.Model(&models.DailyKLine{}).Select("MAX(day)").Scan(&st.LatestDay)
 	}
 	return st
+}
+
+// FetchSingleStockKLine 联网补抓单只股票日K入库（v9e.5 新增，解决本地K线数据不全）
+// 返回新增行数；days<=0 默认 250 个交易日
+func (a *App) FetchSingleStockKLine(stockCode string, days int) int {
+	defer PanicHandler()
+	if days <= 0 {
+		days = 250
+	}
+	var name string
+	db.Dao.Raw(`SELECT name FROM tushare_stock_basic WHERE ts_code = ?`, stockCode).Scan(&name)
+	if name == "" {
+		name = stockCode
+	}
+	n := upsertDailyKLine(stockCode, name, days)
+	logger.SugaredLogger.Infof("单股补抓 %s(%s): 新增 %d 根日K", stockCode, name, n)
+	return n
 }
 
 // GetLocalDailyKLine 读取本地日线（回测/展示用，不发任何网络请求）

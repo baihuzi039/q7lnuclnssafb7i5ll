@@ -888,3 +888,5 @@ export function SetAutoPickSettings(arg1:boolean,arg2:string): Promise<string>;
 export function GetAutoPickSettingsJSON(): Promise<any>;
 
 export function RunAutoPickNow(): Promise<string>;
+
+export function FetchSingleStockKLine(arg1:string, arg2:number): Promise<number>;

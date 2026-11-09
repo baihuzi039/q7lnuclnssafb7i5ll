@@ -142,10 +142,26 @@ func importOneAuctionCSV(path string) (int, error) {
 var auctionSnapRunning = false
 
 // SnapshotAuctionNow 抓取当前时刻的竞价/盘前快照（手动补抓按钮也用这个）
+// v9e.5：周末/已有数据改为同步判断并直接返回提示，按钮点击必弹 message，不再依赖异步事件
 func (a *App) SnapshotAuctionNow() string {
 	defer PanicHandler()
 	if auctionSnapRunning {
 		return "竞价快照正在抓取中，请稍候"
+	}
+	// 同步判断非交易日
+	now := time.Now()
+	wd := now.Weekday()
+	if wd == time.Saturday || wd == time.Sunday {
+		logger.SugaredLogger.Infof("非交易日，跳过竞价快照")
+		return "今天不是交易日（周末），没有竞价数据可抓"
+	}
+	// 同步判断今日已有数据
+	td := now.Format("2006-01-02")
+	var cnt int64
+	db.Dao.Model(&models.DailyAuction{}).Where("trade_date = ?", td).Count(&cnt)
+	if cnt > 0 {
+		logger.SugaredLogger.Infof("今日竞价快照已存在(%d条)，跳过", cnt)
+		return fmt.Sprintf("今日(%s)竞价快照已存在 %d 条，无需重抓", td, cnt)
 	}
 	auctionSnapRunning = true
 	go func() {
@@ -191,10 +207,15 @@ func (a *App) doSnapshotAuction() {
 			rows = append(rows, models.DailyAuction{
 				StockCode: info.SECUCODE, TradeDate: td,
 				Price: price, PreClose: preClose,
-				Vol:         func() float64 { if price > 0 { return amount / price }; return 0 }(), // 竞价量≈竞价额/竞价价（近似）
-				Amount:      amount,
+				Vol: func() float64 {
+					if price > 0 {
+						return amount / price
+					}
+					return 0
+				}(), // 竞价量≈竞价额/竞价价（近似）
+				Amount:       amount,
 				TurnoverRate: toF(convertor.ToString(info.TURNOVERRATE)),
-				VolumeRatio: toF(convertor.ToString(info.VOLUMERATIO)),
+				VolumeRatio:  toF(convertor.ToString(info.VOLUMERATIO)),
 			})
 		}
 		if len(rows) > 0 {
