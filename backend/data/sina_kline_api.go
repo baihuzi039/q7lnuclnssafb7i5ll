@@ -845,3 +845,9 @@ func extractMonthKey(dayStr string) string {
 	}
 	return ""
 }
+
+// FetchFromEastMoneyKLine v9e.8 导出的东财K线源包装：自带换手率+涨跌幅（免费无鉴权）。
+// 供数据同步优先使用；失败时调用方应自行退回 FetchKLineWithFallback。
+func FetchFromEastMoneyKLine(stockCode, stockName, klt string, limit int, end string) *KLineSourceResult {
+	return fetchFromEastMoney(stockCode, stockName, klt, limit, end, "")
+}

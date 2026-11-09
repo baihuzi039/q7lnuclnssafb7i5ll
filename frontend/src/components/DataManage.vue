@@ -103,8 +103,8 @@ const klineColumns = [
   {title: '最高', key: 'high', width: 80},
   {title: '最低', key: 'low', width: 80},
   // [v9e.4] 口径修复: pct_change库内为百分数(1.12=+1.12%), turnover库内为小数(0.0033=0.33%)需×100
-  {title: '涨跌幅%', key: 'pctChange', width: 90, render(row) { return (row.pctChange ?? 0).toFixed(2) }},
-  {title: '换手率%', key: 'turnover', width: 90, render(row) { return ((row.turnover ?? 0) * 100).toFixed(2) }},
+  {title: '涨跌幅%', key: 'pctChange', width: 90, render(row) { return (row.pctChange ?? 0) !== 0 ? (row.pctChange.toFixed(2)) : '0.00' }},
+  {title: '换手率%', key: 'turnover', width: 90, render(row) { return (row.turnover ?? 0) > 0 ? ((row.turnover*100).toFixed(2)) : '-' }},
 ]
 
 function loadStatus() {
@@ -169,7 +169,9 @@ function pickAuctionImport() {
 }
 function snapAuction() {
   SnapshotAuctionNow().then((res) => {
-    if (window.$message) window.$message.info(res)
+    if (window.$message) window.$message.info(res || '指令已发出，但无返回信息，请重试或看控制台日志')
+  }).catch((e) => {
+    if (window.$message) window.$message.error('竞价快照调用失败：' + e)
   })
 }
 function loadAuctionStat() {
@@ -223,6 +225,7 @@ onMounted(() => {
   EventsOn('dailyKLineSyncDone', () => { loadStatus() })
   EventsOn('auctionImportDone', () => { loadAuctionStat() })
   EventsOn('auctionSnapshotDone', () => { loadAuctionStat() })
+  EventsOn('tdxImportDone', () => { loadStatus() })
   EventsOn('auctionSnapshotSkip', (msg) => { if (window.$message && msg) window.$message.warning(msg) })
 })
 onBeforeUnmount(() => { EventsOff('dailyKLineSyncDone') })

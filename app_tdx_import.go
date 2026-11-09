@@ -65,10 +65,10 @@ func (a *App) ImportTdxDayFolder(files []string) string {
 	logger.SugaredLogger.Infof("通达信日线导入开始: %d 个文件", len(dayFiles))
 
 	var (
-		okFiles   atomic.Int64
-		rowSum    atomic.Int64
-		wg        sync.WaitGroup
-		sem       = make(chan struct{}, 8)
+		okFiles atomic.Int64
+		rowSum  atomic.Int64
+		wg      sync.WaitGroup
+		sem     = make(chan struct{}, 8)
 	)
 	for _, f := range dayFiles {
 		wg.Add(1)
@@ -145,6 +145,13 @@ func importOneTdxDay(path string) int {
 	}
 	if len(rows) == 0 {
 		return 0
+	}
+	// v9e.7：day文件无涨跌幅字段，按文件内顺序以前一根收盘价现算（首根记0）
+	// 通达信.day文件按日期升序存储，rows即升序
+	for i := 1; i < len(rows); i++ {
+		if rows[i-1].Close > 0 {
+			rows[i].PctChange = (rows[i].Close/rows[i-1].Close - 1) * 100
+		}
 	}
 	err = db.Dao.Clauses(clause.OnConflict{DoNothing: true}).CreateInBatches(&rows, 1000).Error
 	if err != nil {

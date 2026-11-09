@@ -144,9 +144,13 @@ func syncDailyKLineJob(ctx context.Context) {
 }
 
 // upsertDailyKLine 拉取单只股票日K并入库，返回新增行数
+// v9e.8：优先走东财K线源（免费、自带换手率+涨跌幅，修复MAC源无换手率导致 turnover 全 0）；失败再退回原降级链
 func upsertDailyKLine(stockCode, stockName string, limit int) int {
 	defer PanicHandler()
-	result := data.FetchKLineWithFallback(stockCode, stockName, "101", limit, "")
+	result := data.FetchFromEastMoneyKLine(stockCode, stockName, "101", limit, "")
+	if result == nil || result.Data == nil || len(*result.Data) == 0 {
+		result = data.FetchKLineWithFallback(stockCode, stockName, "101", limit, "")
+	}
 	if result == nil || result.Data == nil || len(*result.Data) == 0 {
 		return 0
 	}
