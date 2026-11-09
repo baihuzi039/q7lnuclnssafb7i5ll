@@ -88,7 +88,7 @@ func fenshiDialTLS(ctx context.Context, network, addr string) (net.Conn, error) 
 	if err != nil {
 		return nil, err
 	}
-	rawConn, err := net.DialTimeout(network, addr, 15*time.Second)
+	rawConn, err := net.DialTimeout(network, addr, 5*time.Second)
 	if err != nil {
 		return nil, err
 	}
@@ -101,11 +101,151 @@ func fenshiDialTLS(ctx context.Context, network, addr string) (net.Conn, error) 
 	return uconn, nil
 }
 
+// fenshiAnalyzeFromTencent 腾讯行情兑底：分时分钟线 + 实时快照(昨收/今开)，无风控限制
+func fenshiAnalyzeFromTencent(stockCode string) (*FenshiAnalysisResult, error) {
+	tcode, ok := fenshiTencentCode(stockCode)
+	if !ok {
+		return nil, fmt.Errorf("无法转换腾讯代码: %s", stockCode)
+	}
+	// 1) 分钟线
+	minURL := fmt.Sprintf("https://web.ifzq.gtimg.cn/appstock/app/minute/query?code=%s", tcode)
+	m, err := fenshiGetOnce(minURL, fenshiPlainClient)
+	if err != nil {
+		return nil, fmt.Errorf("腾讯分钟线请求失败: %v", err)
+	}
+	data, _ := m["data"].(map[string]any)
+	stk, _ := data[tcode].(map[string]any)
+	dd, _ := stk["data"].(map[string]any)
+	rows, _ := dd["data"].([]any)
+	if len(rows) == 0 {
+		return nil, fmt.Errorf("腾讯分钟线为空")
+	}
+	var trend []FenshiTick
+
+	firstPx := 0.0
+	for _, r := range rows {
+		line, _ := r.(string)
+		fs := strings.Fields(line)
+		if len(fs) < 4 {
+			continue
+		}
+		px, _ := strconv.ParseFloat(fs[1], 64)
+		cv, _ := strconv.ParseFloat(fs[2], 64) // 累计量(手)
+		ca, _ := strconv.ParseFloat(fs[3], 64) // 累计额(元)
+		t := fs[0]
+		if len(t) == 4 {
+			t = t[:2] + ":" + t[2:]
+		}
+		pv := cv * 100
+		avg := 0.0
+		if pv > 0 {
+			avg = ca / pv
+		}
+		if firstPx == 0 {
+			firstPx = px
+		}
+		// 腾讯无单根高低价，用现价代替
+		trend = append(trend, FenshiTick{Time: t, Open: px, Now: px, High: px, Low: px, Vol: pv, Amt: ca, Avg: avg})
+	}
+	if len(trend) == 0 {
+		return nil, fmt.Errorf("腾讯分钟线解析为空")
+	}
+	// 2) 快照（昨收）
+	snapURL := fmt.Sprintf("https://qt.gtimg.cn/q=%s", tcode)
+	sm, err := fenshiGetOnce(snapURL, fenshiPlainClient)
+	if err != nil {
+		return nil, fmt.Errorf("腾讯快照请求失败: %v", err)
+	}
+	preClose, name := 0.0, ""
+	for _, v := range sm {
+		line, _ := v.(string)
+		if line == "" || !strings.Contains(line, "~") {
+			continue
+		}
+		body := line
+		if i := strings.Index(line, "\""); i >= 0 {
+			body = line[i+1:]
+			if j := strings.LastIndex(body, "\""); j >= 0 {
+				body = body[:j]
+			}
+		}
+		parts := strings.Split(body, "~")
+		if len(parts) > 4 {
+			name = parts[1]
+			preClose, _ = strconv.ParseFloat(parts[4], 64)
+		}
+		break
+	}
+	if preClose <= 0 {
+		return nil, fmt.Errorf("腾讯快照昨收异常")
+	}
+	// 3) 复用现有指标计算：临时构造与东财相同的结果
+	last := trend[len(trend)-1]
+	openPx := trend[0].Now
+	nowPx := last.Now
+	highPx, lowPx := nowPx, nowPx
+	for _, tk := range trend {
+		if tk.High > highPx {
+			highPx = tk.High
+		}
+		if tk.Low < lowPx {
+			lowPx = tk.Low
+		}
+	}
+	vwap := last.Avg
+	openPct := 0.0
+	if preClose > 0 {
+		openPct = (openPx - preClose) / preClose * 100
+	}
+	vwapDev := 0.0
+	if vwap > 0 {
+		vwapDev = (nowPx - vwap) / vwap * 100
+	}
+	n := len(trend)
+	mom15 := 0.0
+	if n > 15 && trend[n-16].Now > 0 {
+		mom15 = (nowPx - trend[n-16].Now) / trend[n-16].Now * 100
+	}
+	fallFromHigh := 0.0
+	if highPx > 0 {
+		fallFromHigh = (nowPx - highPx) / highPx * 100
+	}
+	res := &FenshiAnalysisResult{
+		Code: stockCode, Name: name,
+		Price: nowPx, PrevClose: preClose,
+		GapPct: openPct, ChangePct: (nowPx - preClose) / preClose * 100,
+		AvgPrice: vwap, AboveVwapP: vwapDev,
+		Mom15: mom15, VolumeRate: 0, // 腾讯无量比基准，置0不误报
+		PullbackPct: fallFromHigh, High: highPx, Low: lowPx,
+		Trend: trend,
+	}
+	res.Signals = fenshiBuildSignals(res)
+	// 兑底说明
+	res.Advice = fmt.Sprintf("[腾讯源] %s 昨收%.2f 今开%.2f 现价%.2f（量比不可用，其余指标正常）", name, preClose, openPx, nowPx)
+	return res, nil
+}
+
+// fenshiTencentCode 证券代码转腾讯格式：600519→sh600519, 000001→sz000001, 300001→sz300001, 830001→bj830001
+func fenshiTencentCode(code string) (string, bool) {
+	code = strings.TrimSpace(code)
+	if len(code) != 6 {
+		return "", false
+	}
+	switch {
+	case strings.HasPrefix(code, "6"):
+		return "sh" + code, true
+	case strings.HasPrefix(code, "8") || strings.HasPrefix(code, "4") || strings.HasPrefix(code, "9"):
+		return "bj" + code, true
+	default:
+		return "sz" + code, true
+	}
+}
+
 var fenshiHTTPClient = &http.Client{
-	Timeout: 15 * time.Second,
+	Timeout: 5 * time.Second,
 	Transport: &http.Transport{
 		DialTLSContext:       fenshiDialTLS,
-		TLSHandshakeTimeout: 15 * time.Second,
+		TLSHandshakeTimeout: 5 * time.Second,
 		ForceAttemptHTTP2:    false,
 		MaxIdleConns:        10,
 		IdleConnTimeout:     60 * time.Second,
@@ -120,7 +260,7 @@ var fenshiUAList = []string{
 
 // fenshiGet 拉取并解析JSON（多重备援：http明文优先→https+utls→备用域名，防东财风控断连EOF）
 // 东财接口支持 http 明文访问，且风控只针对 TLS 握手层；明文请求不被拦截，优先使用。
-var fenshiPlainClient = &http.Client{Timeout: 15 * time.Second}
+var fenshiPlainClient = &http.Client{Timeout: 5 * time.Second}
 
 func fenshiGet(rawURL string) (map[string]any, error) {
 	var lastErr error
@@ -148,7 +288,7 @@ func fenshiGet(rawURL string) (map[string]any, error) {
 		}
 		lastErr = err
 		logger.SugaredLogger.Warnf("fenshiGet 第%d次失败: %v", i+1, err)
-		time.Sleep(300 * time.Millisecond)
+		time.Sleep(200 * time.Millisecond)
 	}
 	return nil, lastErr
 }
@@ -289,11 +429,21 @@ func (a *App) FenshiAnalyzeStock(stockCode string) *FenshiAnalysisResult {
 	}
 	m, err := fenshiGet(url)
 	if err != nil {
-		return retErr("分时数据请求失败: " + err.Error())
+		// 东财全挂（用户网络对东财TLS+明文双重拦截）→ 腾讯行情兜底
+		logger.SugaredLogger.Warnf("FenshiAnalyzeStock 东财失败，转腾讯源: %v", err)
+		res, terr := fenshiAnalyzeFromTencent(stockCode)
+		if terr != nil {
+			return retErr("东财与腾讯双源均失败；东财: " + err.Error() + "；腾讯: " + terr.Error())
+		}
+		return res
 	}
 	d, _ := m["data"].(map[string]any)
 	if d == nil {
-		return retErr("未获取到分时数据（可能代码不存在，或当前为非交易时段且接口无当日数据），代码: " + stockCode)
+		res, terr := fenshiAnalyzeFromTencent(stockCode)
+		if terr != nil {
+			return retErr("未获取到分时数据（可能代码不存在，或非交易时段无当日数据），代码: " + stockCode)
+		}
+		return res
 	}
 	name, _ := d["name"].(string)
 	preClose := fenshiToFloat(d["preClose"])
