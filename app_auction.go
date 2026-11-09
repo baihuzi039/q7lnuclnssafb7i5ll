@@ -162,6 +162,7 @@ func (a *App) doSnapshotAuction() {
 	wd := now.Weekday()
 	if wd == time.Saturday || wd == time.Sunday {
 		logger.SugaredLogger.Infof("非交易日，跳过竞价快照")
+		runtime.EventsEmit(a.ctx, "auctionSnapshotSkip", "今天不是交易日（周末），没有竞价数据可抓")
 		return
 	}
 	td := now.Format("2006-01-02")
@@ -169,6 +170,7 @@ func (a *App) doSnapshotAuction() {
 	db.Dao.Model(&models.DailyAuction{}).Where("trade_date = ?", td).Count(&cnt)
 	if cnt > 0 {
 		logger.SugaredLogger.Infof("今日竞价快照已存在(%d条)，跳过", cnt)
+		runtime.EventsEmit(a.ctx, "auctionSnapshotSkip", fmt.Sprintf("今日(%s)竞价快照已存在 %d 条，无需重抓", td, cnt))
 		return
 	}
 	api := data.NewStockDataApi()

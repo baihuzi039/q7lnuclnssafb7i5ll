@@ -1,17 +1,15 @@
-v9e.2 自动选股CI修复（2026-11-09）
+v9e.4 数据管理三修（2026-11-09）
 ====================================
-只改了 app_auto_pick.go 一个文件。
-用法：解压把 go-stock 文件夹拖进项目根，覆盖 app_auto_pick.go。
+修3个问题：
+1. 上次同步时间持久化：重启软件不再显示"尚未同步"（存data/kline_last_sync.txt）
+2. 抓今日竞价快照：跳过时弹提示（非交易日/已有数据不再"没反应"）
+3. K线查询口径：涨跌幅显示2位小数、换手率×100转百分数（原来直接显示库内小数0.0033，看着像0）
 
-修复（CI #47 三处编译错误）：
-1. context 导入未使用 → 移除
-2. models 导入未使用 → 移除
-3. OvernightCand 无 Chg 字段 → 改用 Net(净涨幅%)；Weight仓位0~1.25改为*100显示百分数
+用法：解压，把 go-stock 文件夹拖进项目根，覆盖合并（3个文件）。
 
 下一步：
 1. 拖入替换
 2. Commit
-3. tag: v9e-track-release（同名覆盖旧tag：先 Repository→Remove tag 删旧的再建）
-   或者新tag: v9e.2-track-release
+3. tag: v9e.4-track-release
 4. Push origin
 5. 看 CI 绿 → 装机

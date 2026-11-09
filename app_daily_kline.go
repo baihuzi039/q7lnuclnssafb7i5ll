@@ -7,6 +7,7 @@ package main
 
 import (
 	"context"
+	"strings"
 	"encoding/csv"
 	"fmt"
 	"io"
@@ -28,8 +29,27 @@ import (
 // klineSyncRunning 防止定时任务与手动触发并发同步
 var klineSyncRunning atomic.Bool
 
-// klineLastSyncTime 上次同步完成时间（内存态，重启后为空属正常）
+// klineLastSyncTime 上次同步完成时间（内存态）
+// [v9e.4] 同时持久化到 data/kline_last_sync.txt，重启后可读回（原版只在内存，重启显示"尚未同步"）
 var klineLastSyncTime atomic.Value // string
+
+const klineLastSyncFile = "data/kline_last_sync.txt"
+
+func klineLastSyncStore(ts string) {
+	klineLastSyncTime.Store(ts)
+	_ = os.MkdirAll("data", 0o755)
+	_ = os.WriteFile(klineLastSyncFile, []byte(ts), 0o644)
+}
+
+func klineLastSyncLoad() string {
+	if v, ok := klineLastSyncTime.Load().(string); ok && v != "" {
+		return v
+	}
+	if b, err := os.ReadFile(klineLastSyncFile); err == nil {
+		return strings.TrimSpace(string(b))
+	}
+	return ""
+}
 
 // syncDailyKLineJob 全市场日线增量同步（后台任务）：
 //  1. 读取股票基础表（StockBasic，已有每日自动更新机制）拿到全市场代码
@@ -117,7 +137,7 @@ func syncDailyKLineJob(ctx context.Context) {
 		}(b.TsCode, b.Name)
 	}
 	wg.Wait()
-	klineLastSyncTime.Store(time.Now().Format("2006-01-02 15:04:05"))
+	klineLastSyncStore(time.Now().Format("2006-01-02 15:04:05"))
 	logger.SugaredLogger.Infof("日线同步完成: 成功 %d 只, 失败/停牌 %d 只, 新增 %d 行, 耗时 %s",
 		okCount.Load(), failCount.Load(), rowSum.Load(), time.Since(start).Round(time.Second))
 }
@@ -232,7 +252,7 @@ func (a *App) SyncDailyKLineNow() string {
 func (a *App) GetDailyKLineSyncStatus() models.DailyKLineSyncStatus {
 	defer PanicHandler()
 	st := models.DailyKLineSyncStatus{Running: klineSyncRunning.Load()}
-	if v, ok := klineLastSyncTime.Load().(string); ok {
+	if v := klineLastSyncLoad(); v != "" {
 		st.LastSyncTime = v
 	}
 	// 分类统计基础表：A股股票(60/00/30/68/8/4开头，排除ETF 51/56/58/15/16/50等) vs ETF

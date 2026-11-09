@@ -101,8 +101,9 @@ const klineColumns = [
   {title: '收盘', key: 'close', width: 80},
   {title: '最高', key: 'high', width: 80},
   {title: '最低', key: 'low', width: 80},
-  {title: '涨跌幅%', key: 'pctChange', width: 90},
-  {title: '换手率%', key: 'turnover', width: 90},
+  // [v9e.4] 口径修复: pct_change库内为百分数(1.12=+1.12%), turnover库内为小数(0.0033=0.33%)需×100
+  {title: '涨跌幅%', key: 'pctChange', width: 90, render(row) { return (row.pctChange ?? 0).toFixed(2) }},
+  {title: '换手率%', key: 'turnover', width: 90, render(row) { return ((row.turnover ?? 0) * 100).toFixed(2) }},
 ]
 
 function loadStatus() {
@@ -203,6 +204,7 @@ onMounted(() => {
   EventsOn('dailyKLineSyncDone', () => { loadStatus() })
   EventsOn('auctionImportDone', () => { loadAuctionStat() })
   EventsOn('auctionSnapshotDone', () => { loadAuctionStat() })
+  EventsOn('auctionSnapshotSkip', (msg) => { if (window.$message && msg) window.$message.warning(msg) })
 })
 onBeforeUnmount(() => { EventsOff('dailyKLineSyncDone') })
 </script>
