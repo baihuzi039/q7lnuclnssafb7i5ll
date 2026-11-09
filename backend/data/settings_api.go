@@ -246,6 +246,10 @@ type Settings struct {
 	// 不进 UpdateConfig 的字段表（设置页表单不含它），只能经 SetSignalScanInterval 单字段 API 修改，
 	// 避免主设置页提交时被零值静默重置（同 long_term_memory_ai_config_id 的处理方式）。
 	SignalScanIntervalSec int `json:"signalScanIntervalSec" gorm:"column:signal_scan_interval_sec;default:60"`
+
+	// [v9e] 14:50自动选股设置
+	AutoPickEnable     int    `json:"autoPickEnable" gorm:"column:auto_pick_enable;default:0"`   // 1=开
+	AutoPickNiuZhiMode string `json:"autoPickNiuZhiMode" gorm:"column:auto_pick_niuzhi_mode;size:8;default:'标准'"` // 严选/标准/全勤
 }
 
 // GetSignalScanIntervalSec 读取信号扫描节拍间隔（秒）；未配置或非法（<=0 / 超界）时回退默认值。

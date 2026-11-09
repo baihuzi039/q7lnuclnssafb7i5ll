@@ -1753,3 +1753,15 @@ export function GetAuctionCount() {
 export function ImportTdxDayFolder(arg1) {
   return window['go']['main']['App']['ImportTdxDayFolder'](arg1);
 }
+
+export function SetAutoPickSettings(arg1,arg2) {
+  return window['go']['main']['App']['SetAutoPickSettings'](arg1,arg2);
+}
+
+export function GetAutoPickSettingsJSON() {
+  return window['go']['main']['App']['GetAutoPickSettingsJSON']();
+}
+
+export function RunAutoPickNow() {
+  return window['go']['main']['App']['RunAutoPickNow']();
+}

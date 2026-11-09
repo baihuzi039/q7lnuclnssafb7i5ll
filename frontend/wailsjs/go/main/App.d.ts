@@ -882,3 +882,9 @@ export function SnapshotAuctionNow(): Promise<string>;
 export function GetAuctionCount(): Promise<any>;
 
 export function ImportTdxDayFolder(arg1:Array<string>): Promise<string>;
+
+export function SetAutoPickSettings(arg1:boolean,arg2:string): Promise<string>;
+
+export function GetAutoPickSettingsJSON(): Promise<any>;
+
+export function RunAutoPickNow(): Promise<string>;

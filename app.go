@@ -1256,6 +1256,29 @@ func (a *App) domReady(ctx context.Context) {
 			time.Sleep(2 * time.Minute)
 			syncDailyKLineJob(a.ctx)
 		}()
+		// [v9e] 14:50 自动选股（工作日；开关在设置页，关闭时直接跳过）
+		a.cron.AddFunc("0 50 14 * * 1-5", func() {
+			if en, _ := GetAutoPickSettings(); en {
+				a.autoPickCronJob()
+			}
+		})
+		// 启动时若当天14:50已过且开了开关，补跑一次（只在14:50~收盘间补，其他时段不补）
+		go func() {
+			if en, _ := GetAutoPickSettings(); !en {
+				return
+			}
+			now := time.Now()
+			if now.Weekday() == time.Saturday || now.Weekday() == time.Sunday {
+				return
+			}
+			// 当天14:50已过且在15:30前（错过不久，结果还有效）
+			deadline := time.Date(now.Year(), now.Month(), now.Day(), 15, 30, 0, 0, now.Location())
+			mark := time.Date(now.Year(), now.Month(), now.Day(), 14, 50, 0, 0, now.Location())
+			if now.After(mark) && now.Before(deadline) {
+				time.Sleep(90 * time.Second)
+				a.autoPickCronJob()
+			}
+		}()
 	}()
 
 	//检查谷歌浏览器
