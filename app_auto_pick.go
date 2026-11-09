@@ -8,7 +8,6 @@ package main
 // ==================================================================
 
 import (
-	"context"
 	"fmt"
 	"strings"
 	"sync/atomic"
@@ -20,7 +19,6 @@ import (
 	"go-stock/backend/data"
 	"go-stock/backend/db"
 	"go-stock/backend/logger"
-	"go-stock/backend/models"
 )
 
 // EmitAutoPickDone 推送自动选股结果到前端（ctx为nil时跳过，测试环境无窗口）
@@ -120,12 +118,12 @@ func (a *App) autoPickJob(manual bool) string {
 			sb.WriteString("  今日无信号 → 空仓\n")
 		} else {
 			top := orn.Cands[0]
-			sb.WriteString(fmt.Sprintf("  Top1: %s %s 现价%.2f %+0.2f%% 建议仓%d%%\n", top.Code, top.Name, top.Price, top.Chg, top.Weight))
+			sb.WriteString(fmt.Sprintf("  Top1: %s %s 现价%.2f %+0.2f%% 建议仓%.0f%%\n", top.Code, top.Name, top.Price, top.Net, top.Weight*100))
 			for i, c := range orn.Cands[1:] {
 				if i >= 4 {
 					break
 				}
-				sb.WriteString(fmt.Sprintf("  候补: %s %s 现价%.2f %+0.2f%% 仓%d%%\n", c.Code, c.Name, c.Price, c.Chg, c.Weight))
+				sb.WriteString(fmt.Sprintf("  候补: %s %s 现价%.2f %+0.2f%% 仓%.0f%%\n", c.Code, c.Name, c.Price, c.Net, c.Weight*100))
 			}
 		}
 	}
