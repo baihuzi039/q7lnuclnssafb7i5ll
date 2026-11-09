@@ -1,4 +1,6 @@
-// [local-patch] v9c.5 (2026-11-09) — 数据管理板块重建：从v5数据层覆盖包v6考古恢复本文件，内容与v6版一致（仅本头注释新增）。
+// [local-patch] v9c.5 (2026-11-09) — 数据管理板块重建：从v5数据层覆盖包v6考古恢复本文件。
+// [v9c.5.1] CI编译修复：OpenDirectoryDialog改用OpenDialogOptions结构体（wails v2新版要求）；竞价快照res.Result判空改为res.Code!=0/len(Data)==0（Result为匿名结构体非指针，不可与nil比较）。
+
 package main
 
 // [local-patch] app_daily_kline.go — 本地日线历史库：每日自动增量更新 + 手动触发 + 状态查询。
@@ -151,7 +153,7 @@ func toF(s string) float64 {
 // ExportDatabaseBackup 导出 stock.db 备份到指定文件夹（WAL 收拢后整文件拷贝，不中断服务）
 func (a *App) ExportDatabaseBackup() string {
 	defer PanicHandler()
-	dir, err := runtime.OpenDirectoryDialog(a.ctx, "选择备份保存位置")
+	dir, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{Title: "选择备份保存位置"})
 	if err != nil || dir == "" {
 		return ""
 	}
@@ -194,7 +196,7 @@ func fileSize(p string) int64 {
 // SelectDirectory 弹出系统文件夹选择框
 func (a *App) SelectDirectory() string {
 	defer PanicHandler()
-	dir, err := runtime.OpenDirectoryDialog(a.ctx, "选择通达信日线数据文件夹（内含 .day 文件）")
+	dir, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{Title: "选择通达信日线数据文件夹（内含 .day 文件）"})
 	if err != nil || dir == "" {
 		return ""
 	}
@@ -263,7 +265,7 @@ type ExportReq struct {
 // ExportDataCSV 按类别导出 CSV 到用户选择的文件夹
 func (a *App) ExportDataCSV(req ExportReq) string {
 	defer PanicHandler()
-	dir, err := runtime.OpenDirectoryDialog(a.ctx, "选择导出保存位置")
+	dir, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{Title: "选择导出保存位置"})
 	if err != nil || dir == "" {
 		return ""
 	}
