@@ -1,0 +1,17 @@
+v9e.2 自动选股CI修复（2026-11-09）
+====================================
+只改了 app_auto_pick.go 一个文件。
+用法：解压把 go-stock 文件夹拖进项目根，覆盖 app_auto_pick.go。
+
+修复（CI #47 三处编译错误）：
+1. context 导入未使用 → 移除
+2. models 导入未使用 → 移除
+3. OvernightCand 无 Chg 字段 → 改用 Net(净涨幅%)；Weight仓位0~1.25改为*100显示百分数
+
+下一步：
+1. 拖入替换
+2. Commit
+3. tag: v9e-track-release（同名覆盖旧tag：先 Repository→Remove tag 删旧的再建）
+   或者新tag: v9e.2-track-release
+4. Push origin
+5. 看 CI 绿 → 装机
