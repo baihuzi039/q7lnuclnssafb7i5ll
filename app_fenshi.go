@@ -88,7 +88,7 @@ func fenshiDialTLS(ctx context.Context, network, addr string) (net.Conn, error) 
 	if err != nil {
 		return nil, err
 	}
-	rawConn, err := net.DialTimeout(network, addr, 5*time.Second)
+	rawConn, err := net.DialTimeout(network, addr, 3*time.Second)
 	if err != nil {
 		return nil, err
 	}
@@ -111,14 +111,15 @@ func fenshiAnalyzeFromTencent(stockCode string) (*FenshiAnalysisResult, error) {
 	minURL := fmt.Sprintf("https://web.ifzq.gtimg.cn/appstock/app/minute/query?code=%s", tcode)
 	m, err := fenshiGetOnce(minURL, fenshiPlainClient)
 	if err != nil {
-		return nil, fmt.Errorf("腾讯分钟线请求失败: %v", err)
+		return nil, fmt.Errorf("腾讯分钟线请求失败（请检查代理/加速器/防火墙）: %v", err)
 	}
 	data, _ := m["data"].(map[string]any)
 	stk, _ := data[tcode].(map[string]any)
 	dd, _ := stk["data"].(map[string]any)
 	rows, _ := dd["data"].([]any)
 	if len(rows) == 0 {
-		return nil, fmt.Errorf("腾讯分钟线为空")
+		// 返回了 HTML 而非 JSON → 用户网络把腾讯也劫持/代理拦截了
+		return nil, fmt.Errorf("腾讯返回非数据内容（你的网络可能开了代理/加速器/安全软件拦截了行情请求，请关闭后重试）")
 	}
 	var trend []FenshiTick
 
@@ -242,10 +243,10 @@ func fenshiTencentCode(code string) (string, bool) {
 }
 
 var fenshiHTTPClient = &http.Client{
-	Timeout: 5 * time.Second,
+	Timeout: 3 * time.Second,
 	Transport: &http.Transport{
 		DialTLSContext:       fenshiDialTLS,
-		TLSHandshakeTimeout: 5 * time.Second,
+		TLSHandshakeTimeout: 3 * time.Second,
 		ForceAttemptHTTP2:    false,
 		MaxIdleConns:        10,
 		IdleConnTimeout:     60 * time.Second,
@@ -260,7 +261,7 @@ var fenshiUAList = []string{
 
 // fenshiGet 拉取并解析JSON（多重备援：http明文优先→https+utls→备用域名，防东财风控断连EOF）
 // 东财接口支持 http 明文访问，且风控只针对 TLS 握手层；明文请求不被拦截，优先使用。
-var fenshiPlainClient = &http.Client{Timeout: 5 * time.Second}
+var fenshiPlainClient = &http.Client{Timeout: 3 * time.Second}
 
 func fenshiGet(rawURL string) (map[string]any, error) {
 	var lastErr error
@@ -288,7 +289,6 @@ func fenshiGet(rawURL string) (map[string]any, error) {
 		}
 		lastErr = err
 		logger.SugaredLogger.Warnf("fenshiGet 第%d次失败: %v", i+1, err)
-		time.Sleep(200 * time.Millisecond)
 	}
 	return nil, lastErr
 }
@@ -429,13 +429,18 @@ func (a *App) FenshiAnalyzeStock(stockCode string) *FenshiAnalysisResult {
 	}
 	m, err := fenshiGet(url)
 	if err != nil {
-		// 东财全挂（用户网络对东财TLS+明文双重拦截）→ 腾讯行情兜底
+		// 东财全挂（用户网络对东财TLS+明文双重拦截）→ 腾讯兜底 → 新浪兜底
 		logger.SugaredLogger.Warnf("FenshiAnalyzeStock 东财失败，转腾讯源: %v", err)
 		res, terr := fenshiAnalyzeFromTencent(stockCode)
-		if terr != nil {
-			return retErr("东财与腾讯双源均失败；东财: " + err.Error() + "；腾讯: " + terr.Error())
+		if terr == nil {
+			return res
 		}
-		return res
+		logger.SugaredLogger.Warnf("FenshiAnalyzeStock 腾讯失败，转新浪源: %v", terr)
+		res2, serr := fenshiAnalyzeFromSina(stockCode)
+		if serr == nil {
+			return res2
+		}
+		return retErr("三源均失败。东财: " + err.Error() + "；腾讯: " + terr.Error() + "；新浪: " + serr.Error())
 	}
 	d, _ := m["data"].(map[string]any)
 	if d == nil {
@@ -618,4 +623,136 @@ func (a *App) FenshiHotBoards() []map[string]any {
 		}
 	}
 	return out
+}
+
+// fenshiAnalyzeFromSina 新浪行情兜底（第三级）：快照 hq.sinajs.cn + 5分钟K线合成
+// 需带 Referer: finance.sina.com.cn；JSON 数组 [{day,open,high,low,close,volume}]
+func fenshiAnalyzeFromSina(stockCode string) (*FenshiAnalysisResult, error) {
+	tcode, ok := fenshiTencentCode(stockCode)
+	if !ok {
+		return nil, fmt.Errorf("无法转换代码: %s", stockCode)
+	}
+	// 1) 5分钟K线（datalen=48 覆盖全天）
+	kURL := fmt.Sprintf("https://vip.stock.finance.sina.com.cn/quotes_service/api/json_v2.php/CN_MarketData.getKLineData?symbol=%s&scale=5&ma=no&datalen=48", tcode)
+	req, err := http.NewRequest("GET", kURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Referer", "https://finance.sina.com.cn/")
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36")
+	resp, err := fenshiPlainClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("新浪K线请求失败（检查代理/加速器）: %v", err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	var ks []struct {
+		Day    string `json:"day"`
+		Open   string `json:"open"`
+		High   string `json:"high"`
+		Low    string `json:"low"`
+		Close  string `json:"close"`
+		Volume string `json:"volume"`
+	}
+	if err := json.Unmarshal(body, &ks); err != nil {
+		return nil, fmt.Errorf("新浪K线返回非JSON（你的网络可能拦截了新浪行情，检查代理规则）: %v", err)
+	}
+	if len(ks) == 0 {
+		return nil, fmt.Errorf("新浪K线为空")
+	}
+	// 2) 合成 trend（与东财趋势对齐：Open=bar开，Now=bar收，Vol为成交量股）
+	var trend []FenshiTick
+	var sumAmtPxVol float64
+	var sumVolAll float64
+	for _, k := range ks {
+		o, _ := strconv.ParseFloat(k.Open, 64)
+		h, _ := strconv.ParseFloat(k.High, 64)
+		l, _ := strconv.ParseFloat(k.Low, 64)
+		c, _ := strconv.ParseFloat(k.Close, 64)
+		v, _ := strconv.ParseFloat(k.Volume, 64)
+		sumVolAll += v
+		sumAmtPxVol += (o + h + l + c) / 4 * v
+		t := strings.Replace(k.Day, "2026-", "", 1)
+		t = strings.Replace(t, "2025-", "", 1)
+		if i2 := strings.Index(k.Day, " "); i2 >= 0 {
+			t = k.Day[i2+1:]
+		}
+		trend = append(trend, FenshiTick{Time: t, Open: o, Now: c, High: h, Low: l, Vol: v, Amt: (o + h + l + c) / 4 * v, Avg: 0})
+	}
+	if len(trend) == 0 {
+		return nil, fmt.Errorf("新浪K线解析为空")
+	}
+	// 3) 快照（昨收、名称、现价、总额）——hq.sinajs.cn GBK 编码
+	snapURL := fmt.Sprintf("https://hq.sinajs.cn/list=%s", tcode)
+	sreq, _ := http.NewRequest("GET", snapURL, nil)
+	sreq.Header.Set("Referer", "https://finance.sina.com.cn/")
+	sreq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36")
+	sresp, err := fenshiPlainClient.Do(sreq)
+	if err != nil {
+		return nil, fmt.Errorf("新浪快照请求失败: %v", err)
+	}
+	defer sresp.Body.Close()
+	sbodyRaw, _ := io.ReadAll(sresp.Body)
+	// GBK→UTF-8（名称是中文；其余数字ASCII不受影响）
+	name := ""
+	preClose, nowPx := 0.0, 0.0
+	if sl := string(sbodyRaw); strings.Contains(sl, "~") {
+		// 简易GBK兼容：数字字段ASCII可直接解析；中文名单独取（失败则用代码）
+		i3 := strings.Index(sl, "\"")
+		j3 := strings.LastIndex(sl, "\"")
+		if i3 >= 0 && j3 > i3 {
+			fields := strings.Split(sl[i3+1:j3], ",")
+			if len(fields) > 32 {
+				nowPx, _ = strconv.ParseFloat(fields[3], 64)
+				preClose, _ = strconv.ParseFloat(fields[2], 64)
+				// 昨收其实是 fields[2]；今开 fields[1]
+				name = "GBK" // GBK中文名无法直接解析，仅标识
+			}
+		}
+	}
+	if preClose <= 0 || nowPx <= 0 {
+		return nil, fmt.Errorf("新浪快照解析失败")
+	}
+	_ = name
+	// 4) 指标计算（同腾讯兜底口径）
+	openPx := trend[0].Open
+	highPx, lowPx := trend[0].High, trend[0].Low
+	for _, tk := range trend {
+		if tk.High > highPx {
+			highPx = tk.High
+		}
+		if tk.Low < lowPx {
+			lowPx = tk.Low
+		}
+	}
+	vwap := 0.0
+	if sumVolAll > 0 {
+		vwap = sumAmtPxVol / sumVolAll
+	}
+	openPct := (openPx - preClose) / preClose * 100
+	vwapDev := 0.0
+	if vwap > 0 {
+		vwapDev = (nowPx - vwap) / vwap * 100
+	}
+	n := len(trend)
+	mom15 := 0.0 // 5分钟粒度：15分钟=3根
+	if n > 3 && trend[n-4].Now > 0 {
+		mom15 = (nowPx - trend[n-4].Now) / trend[n-4].Now * 100
+	}
+	fallFromHigh := (nowPx - highPx) / highPx * 100
+	res := &FenshiAnalysisResult{
+		Code: stockCode, Name: tcode,
+		Price: nowPx, PrevClose: preClose,
+		GapPct: openPct, ChangePct: (nowPx - preClose) / preClose * 100,
+		AvgPrice: vwap, AboveVwapP: vwapDev,
+		Mom15: mom15, VolumeRate: 0,
+		PullbackPct: fallFromHigh, High: highPx, Low: lowPx,
+		Trend: trend,
+	}
+	res.Signals = fenshiBuildSignals(res)
+	res.Advice = fmt.Sprintf("[新浪源·5分钟级] %s 昨收%.2f 今开%.2f 现价%.2f（分钟粒度较粗、量比不可用，趋势判断仍有效）", tcode, preClose, openPx, nowPx)
+	return res, nil
 }
