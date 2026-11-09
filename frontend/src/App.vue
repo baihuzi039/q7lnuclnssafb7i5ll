@@ -190,15 +190,7 @@ async function refreshEffectiveVip() {
   }
 }
 async function handleKlineAnalysisClick() {
-  await refreshEffectiveVip()
-  if (vipLevel.value < 2) {
-    // 有赞助码但未生效时给出具体原因（如尚未生效 / 已到期 / 字段异常），
-    // 避免"关于页显示 VIP2，这里却只说需要升级"的认知冲突
-    getDiscreteMessage().warning(vipInactiveReason.value
-      ? `K线分析需要 VIP2 及以上有效赞助：${vipInactiveReason.value}`
-      : 'K线分析功能需要 VIP2 及以上赞助用户才能使用，请升级后体验')
-    return
-  }
+  // [fenshi-unlock] 本地解锁：跳过 VIP2 赞助校验，直接放行
   activeKey.value = 'klineAnalysis'
   router.push({ name: 'klineAnalysis' })
 }

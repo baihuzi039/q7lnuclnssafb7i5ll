@@ -118,9 +118,22 @@ var fenshiUAList = []string{
 	"Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0",
 }
 
-// fenshiGet 拉取并解析JSON（带重试 + 域名备援，防东财风控断连EOF）
+// fenshiGet 拉取并解析JSON（多重备援：http明文优先→https+utls→备用域名，防东财风控断连EOF）
+// 东财接口支持 http 明文访问，且风控只针对 TLS 握手层；明文请求不被拦截，优先使用。
+var fenshiPlainClient = &http.Client{Timeout: 15 * time.Second}
+
 func fenshiGet(rawURL string) (map[string]any, error) {
 	var lastErr error
+	// 第0优先：http 明文（无TLS指纹，风控不拦）
+	if strings.HasPrefix(rawURL, "https://") {
+		plainURL := "http://" + rawURL[len("https://"):]
+		m, err := fenshiGetOnce(plainURL, fenshiPlainClient)
+		if err == nil {
+			return m, nil
+		}
+		lastErr = err
+		logger.SugaredLogger.Warnf("fenshiGet http明文失败，转https: %v", err)
+	}
 	attempts := []string{rawURL}
 	// 域名备援：主域被风控时换备用节点（东财同一接口多域名部署）
 	if strings.Contains(rawURL, "push2his.eastmoney.com") {
@@ -129,7 +142,7 @@ func fenshiGet(rawURL string) (map[string]any, error) {
 		attempts = append(attempts, strings.Replace(rawURL, "push2.eastmoney.com", "92.push2.eastmoney.com", 1))
 	}
 	for i, u := range attempts {
-		m, err := fenshiGetOnce(u)
+		m, err := fenshiGetOnce(u, fenshiHTTPClient)
 		if err == nil {
 			return m, nil
 		}
@@ -140,7 +153,7 @@ func fenshiGet(rawURL string) (map[string]any, error) {
 	return nil, lastErr
 }
 
-func fenshiGetOnce(url string) (map[string]any, error) {
+func fenshiGetOnce(url string, client *http.Client) (map[string]any, error) {
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, err
@@ -152,7 +165,7 @@ func fenshiGetOnce(url string) (map[string]any, error) {
 	req.Header.Set("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
 	req.Header.Set("Connection", "keep-alive")
 	req.Header.Set("Referer", "https://quote.eastmoney.com/")
-	resp, err := fenshiHTTPClient.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
 	}
