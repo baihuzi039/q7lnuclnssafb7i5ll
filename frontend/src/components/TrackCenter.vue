@@ -41,18 +41,15 @@
         <!-- 操作区 -->
         <n-space>
           <n-button size="small" type="primary" ghost @click="showAddBatch = true">新建批次</n-button>
-          <template v-if="isOvernightTab">
-            <n-date-picker v-model:value="overnightDateTs" type="date" size="small" style="width: 150px" to="body"
+          <template v-if="isOvernightTab || isNiuZhiTab">
+            <!-- v9c.3: 两tab共用同一个date-picker实例(一夜上实测正常, 避免牛指重复实例的未知问题) -->
+            <n-date-picker v-model:value="overnightDateTs" type="date" size="small" style="width: 150px"
                            :is-date-disabled="disableFutureDates" placeholder="选股日期" />
-            <n-button size="small" type="error" ghost :loading="overnightLoading" @click="runOvernight">一夜选股(14:50后)</n-button>
-            <n-button size="small" type="warning" ghost :loading="overnightCloseLoading" @click="runOvernightClose">收盘记录</n-button>
-          </template>
-          <template v-else-if="isNiuZhiTab">
-            <n-date-picker v-model:value="niuzhiDateTs" type="date" size="small" style="width: 150px" to="body"
-                           :is-date-disabled="disableFutureDates" placeholder="选股日期" />
-            <n-select v-model:value="niuzhiMode" size="small" style="width: 100px" to="body"
+            <n-select v-if="isNiuZhiTab" v-model:value="niuzhiMode" size="small" style="width: 100px"
                       :options="[{label:'严选',value:'严选'},{label:'标准',value:'标准'},{label:'全勤',value:'全勤'}]" />
-            <n-button size="small" type="error" ghost :loading="niuzhiLoading" @click="runNiuZhi">牛指选股(收盘后)</n-button>
+            <n-button v-if="isOvernightTab" size="small" type="error" ghost :loading="overnightLoading" @click="runOvernight">一夜选股(14:50后)</n-button>
+            <n-button v-if="isOvernightTab" size="small" type="warning" ghost :loading="overnightCloseLoading" @click="runOvernightClose">收盘记录</n-button>
+            <n-button v-if="isNiuZhiTab" size="small" type="error" ghost :loading="niuzhiLoading" @click="runNiuZhi">牛指选股(收盘后)</n-button>
           </template>
           <template v-else-if="activeIsCustom">
             <n-tooltip trigger="hover"><template #trigger><n-button size="small" type="error" ghost disabled>选股(待接入)</n-button></template>该自建策略的选股逻辑待接入，先用「新建批次/扫描收件箱导入」加自选股</n-tooltip>
@@ -255,7 +252,7 @@ const isOvernightTab = computed(() => {
 })
 // v9c: 牛指T+1专属选股(日期+三模式)
 const niuzhiLoading = ref(false)
-const niuzhiDateTs = ref(Date.now())
+const niuzhiDateTs = ref(Date.now()) // 牛指tab上次用的日期(v9c.4各记各的)
 const niuzhiMode = ref('标准')
 const niuzhiScan = ref(null)
 const isNiuZhiTab = computed(() => {
@@ -263,11 +260,12 @@ const isNiuZhiTab = computed(() => {
   return !!s && /牛指/.test(s.name || '')
 })
 function runNiuZhi() {
+  niuzhiDateTs.value = overnightDateTs.value // 记住牛指本次用的日期
   niuzhiLoading.value = true
-  RunNiuZhiScanJSON(fmtDay(niuzhiDateTs.value), niuzhiMode.value).then((res) => {
+  RunNiuZhiScanJSON(fmtDay(overnightDateTs.value), niuzhiMode.value).then((res) => {
     niuzhiLoading.value = false
     niuzhiScan.value = res || null
-    overnightModalTitle.value = '牛指选股结果 (' + fmtDay(niuzhiDateTs.value) + ' · ' + niuzhiMode.value + ')'
+    overnightModalTitle.value = '牛指选股结果 (' + fmtDay(overnightDateTs.value) + ' · ' + niuzhiMode.value + ')'
     showOvernightModal.value = true
   }).catch((e) => {
     niuzhiLoading.value = false
@@ -499,6 +497,13 @@ function loadStrategies() {
 
 function onSwitchStrategy() {
   checkedBatches.value = []
+  // v9c.4: 共用date-picker但各tab记住各自日期——切tab时把组件值切到该tab上次用的
+  const s = strategies.value.find(x => String(x.id) === activeStrategy.value)
+  if (s && /牛指/.test(s.name || '')) {
+    overnightDateTs.value = niuzhiDateTs.value
+  } else if (s && /一夜/.test(s.name || '')) {
+    niuzhiDateTs.value = overnightDateTs.value
+  }
   refresh()
 }
 
