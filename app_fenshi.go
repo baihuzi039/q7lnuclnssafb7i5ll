@@ -12,12 +12,14 @@ package main
 // ==================================================================
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -88,9 +90,40 @@ func fenshiDialTLS(ctx context.Context, network, addr string) (net.Conn, error) 
 	if err != nil {
 		return nil, err
 	}
-	rawConn, err := net.DialTimeout(network, addr, 3*time.Second)
-	if err != nil {
-		return nil, err
+	var rawConn net.Conn
+	// 有系统代理时先建 CONNECT 隧道（否则 utls 直接对目标裸连，绕过了代理）
+	if pu := fenshiSysProxy(); pu != nil {
+		pconn, derr := net.DialTimeout("tcp", pu.Host, 3*time.Second)
+		if derr != nil {
+			return nil, fmt.Errorf("连接系统代理失败: %v", derr)
+		}
+		req := &http.Request{
+			Method: "CONNECT",
+			URL:    &url.URL{Opaque: addr},
+			Host:   addr,
+			Header: http.Header{},
+		}
+		if err := req.Write(pconn); err != nil {
+			pconn.Close()
+			return nil, err
+		}
+		br := bufio.NewReader(pconn)
+		resp, err := http.ReadResponse(br, req)
+		if err != nil {
+			pconn.Close()
+			return nil, fmt.Errorf("代理CONNECT失败: %v", err)
+		}
+		if resp.StatusCode != 200 {
+			pconn.Close()
+			return nil, fmt.Errorf("代理CONNECT状态: %s", resp.Status)
+		}
+		rawConn = pconn
+	} else {
+		rc, derr := net.DialTimeout(network, addr, 3*time.Second)
+		if derr != nil {
+			return nil, derr
+		}
+		rawConn = rc
 	}
 	cfg := &utls.Config{ServerName: host, NextProtos: []string{"http/1.1"}}
 	uconn := utls.UClient(rawConn, cfg, utls.HelloChrome_Auto)
