@@ -227,7 +227,7 @@ func main() {
 		OnShutdown:               app.shutdown,
 		WindowStartState:         options.Normal,
 		SingleInstanceLock: &options.SingleInstanceLock{
-			UniqueId:               "go-stock",
+			UniqueId:               "go-stock-fenshi", // [fenshi] 分时模块独立实例锁，与回测版(go-stock)可同时运行
 			OnSecondInstanceLaunch: OnSecondInstanceLaunch,
 		},
 		Bind: []interface{}{
