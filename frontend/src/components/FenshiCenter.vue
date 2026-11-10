@@ -16,25 +16,21 @@
       <!-- 右侧：大分时图 -->
       <div class="right-pane">
         <n-card size="small" v-if="result" class="mb12 chart-card">
-          <!-- 大标题：居中，名称+代码（代码去前缀） -->
-          <template #header>
-            <div class="chart-title">
-              <span class="title-name">{{ result.name }}</span>
-              <span class="title-code">（{{ stripPrefix(result.code) }}）</span>
-            </div>
-          </template>
-
-          <!-- 顶部行情行 + 大时钟 -->
+          <!-- 顶部一行：时钟左上（蓝框） + 行情紧随（绿框） + 名称代码正中间放大 -->
           <div class="top-row">
+            <div class="big-clock">
+              <span class="clock-time">{{ clockStr }}</span>
+              <span class="clock-date">{{ clockDate }}</span>
+            </div>
             <div class="quote-line">
               <span class="price" :class="result.changePct >= 0 ? 'up' : 'down'">{{ result.price.toFixed(2) }}</span>
               <span :class="result.changePct >= 0 ? 'up' : 'down'"> {{ result.changePct.toFixed(2) }}%</span>
               <span class="dim">高开 {{ result.gapPct.toFixed(2) }}% · 量比 {{ result.volumeRate.toFixed(2) }} · 均价 {{ result.avgPrice.toFixed(2) }}（{{ result.aboveVwapP >= 0 ? '+' : '' }}{{ result.aboveVwapP.toFixed(2) }}%）· 15分钟动量 {{ result.mom15.toFixed(2) }}%</span>
             </div>
-            <!-- 大时钟（校准到本机系统时间，精确到秒） -->
-            <div class="big-clock">
-              <span class="clock-time">{{ clockStr }}</span>
-              <span class="clock-date">{{ clockDate }}</span>
+            <!-- 名称+代码：正中间放大 -->
+            <div class="chart-title">
+              <span class="title-name">{{ result.name }}</span>
+              <span class="title-code">（{{ stripPrefix(result.code) }}）</span>
             </div>
           </div>
 
@@ -289,7 +285,7 @@ const gridLines = computed(() => {
   if (!r || !r.trend || r.trend.length < 2) return [];
   const { min, max } = valueRange(r.trend);
   const lines = [];
-  const N = 4;
+  const N = 8; // v9f.20.2：纵轴格子细分（8格，更多刻度）
   for (let k = 1; k <= N; k++) {
     const v = min + ((max - min) * k) / (N + 1);
     const y = yOf(v, min, max);
@@ -312,9 +308,13 @@ const xTicks = computed(() => {
   if (!r || !r.trend || r.trend.length < 2) return [];
   const n = r.trend.length; // 全天 240/241 个分钟点，上午 121 点
   const amPts = Math.min(n, 121);
+  // v9f.20.1 修复：分钟偏移换算为真实时钟，下午要跳过午休（11:30~13:00）
   const label = (m) => {
-    const h = Math.floor(m / 60), mm = m % 60;
-    return (h === 11 && mm === 30) ? "11:30/13:00" : `${h}:${String(mm).padStart(2, "0")}`;
+    if (m === 120) return "11:30/13:00";
+    // 上午：9:30 + m；下午：13:00 + (m-120)
+    const total = m <= 120 ? 9 * 60 + 30 + m : 13 * 60 + (m - 120);
+    const h = Math.floor(total / 60) % 24, mm = total % 60;
+    return `${h}:${String(mm).padStart(2, "0")}`;
   };
   // 分钟偏移数组：0,30,60,90,120（上午）→ 120(=11:30/13:00),150,180,210,240（下午映射回轴位置）
   const mins = [0, 30, 60, 90, 120, 150, 180, 210, 240];
@@ -424,14 +424,19 @@ function onChartDblClick() {
 .add-msg { font-size: 12px; margin-bottom: 6px; }
 .add-msg.ok { color: #22a45d; }
 .add-msg.err { color: #e04b4b; }
-/* v9f.20：标题居中 */
-.chart-title { display: flex; justify-content: center; align-items: baseline; gap: 2px; }
-.title-name { font-size: 22px; font-weight: 700; color: #f5c542; letter-spacing: 1px; }
-.title-code { font-size: 16px; font-weight: 600; color: #7eb8ff; }
+/* v9f.20.2：时钟左上，行情紧随，名称+代码绝对居中并放大 */
+.top-row { position: relative; }
+.chart-title { position: absolute; left: 50%; transform: translateX(-50%); display: flex; align-items: baseline; gap: 2px; white-space: nowrap; }
+.title-name { font-size: 28px; font-weight: 800; color: #f5c542; letter-spacing: 2px; text-shadow: 0 0 10px rgba(245,197,66,.35); }
+.title-code { font-size: 18px; font-weight: 700; color: #7eb8ff; }
+.big-clock { flex-shrink: 0; }
+.clock-time { font-size: 24px; }
+.quote-line { flex-shrink: 1; text-align: left; }
 /* 顶部行情行 + 大时钟 */
 .top-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
-.quote-line { font-size: 15px; }
-.quote-line .price { font-size: 24px; font-weight: bold; margin-right: 6px; }
+.quote-line { font-size: 13px; text-align: center; flex: 1; min-width: 0; }
+.quote-line .dim { margin-left: 6px; }
+.quote-line .price { font-size: 22px; font-weight: bold; margin-right: 6px; }
 .up { color: #e04b4b; }
 .down { color: #22a45d; }
 .dim { color: #888; font-size: 12px; margin-left: 8px; }
