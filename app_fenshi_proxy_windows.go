@@ -43,8 +43,7 @@ func fenshiSysProxy() *url.URL {
 		if !strings.Contains(addr, "://") {
 			addr = "http://" + addr
 		}
-		u, err := url.Parse(addr)
-		if err == nil {
+		if _, err := url.Parse(addr); err == nil {
 			fenshiSysProxyURL = addr
 			logger.SugaredLogger.Infof("fenshi 使用系统代理: %s", addr)
 		}
