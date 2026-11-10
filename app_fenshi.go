@@ -337,7 +337,10 @@ func fenshiPSFetch(rawURL string) (map[string]any, error) {
 		strings.ReplaceAll(rawURL, "'", "''"))
 	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command", script).Output()
+	cmd := exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command", script)
+	// v9f.16：隐藏控制台窗口，避免分析时弹出蓝/黑框影响体验
+	cmd.SysProcAttr = fenshiHideWindow()
+	out, err := cmd.Output()
 	if err != nil {
 		return nil, err
 	}
@@ -561,32 +564,29 @@ func fenshiAnalyzeCore(stockCode string) *FenshiAnalysisResult {
 		logger.SugaredLogger.Errorf("FenshiAnalyzeStock %s: %s", stockCode, msg)
 		return &FenshiAnalysisResult{Code: stockCode, ErrMsg: msg}
 	}
+	// v9f.16：东财直连在本机被阻断已成定局，直接以腾讯为主源（实测分钟线+快照全通），
+	// 省掉东财多级重试的漫长等待（这是"分析卡死"的主因）
+	res, terr := fenshiAnalyzeFromTencent(stockCode)
+	if terr == nil {
+		return res
+	}
+	logger.SugaredLogger.Warnf("FenshiAnalyzeStock 腾讯失败，转新浪源: %v", terr)
+	res2, serr := fenshiAnalyzeFromSina(stockCode)
+	if serr == nil {
+		return res2
+	}
+	// 腾讯、新浪都挂才走东财全链（含PowerShell兜底）
 	m, err := fenshiGet(url)
 	if err != nil {
-		// 东财全挂（用户网络对东财TLS+明文双重拦截）→ 腾讯兜底 → 新浪兜底
-		logger.SugaredLogger.Warnf("FenshiAnalyzeStock 东财失败，转腾讯源: %v", err)
-		res, terr := fenshiAnalyzeFromTencent(stockCode)
-		if terr == nil {
-			return res
-		}
-		logger.SugaredLogger.Warnf("FenshiAnalyzeStock 腾讯失败，转新浪源: %v", terr)
-		res2, serr := fenshiAnalyzeFromSina(stockCode)
-		if serr == nil {
-			return res2
-		}
 		proxyInfo := "无(裸连)"
 		if pu := fenshiSysProxy(); pu != nil {
 			proxyInfo = pu.Host
 		}
-		return retErr("三源均失败。[系统代理=" + proxyInfo + " 版本=" + Version + "] 东财: " + err.Error() + "；腾讯: " + terr.Error() + "；新浪: " + serr.Error())
+		return retErr("三源均失败。[系统代理=" + proxyInfo + " 版本=" + Version + "] 腾讯: " + terr.Error() + "；新浪: " + serr.Error() + "；东财: " + err.Error())
 	}
 	d, _ := m["data"].(map[string]any)
 	if d == nil {
-		res, terr := fenshiAnalyzeFromTencent(stockCode)
-		if terr != nil {
-			return retErr("未获取到分时数据（可能代码不存在，或非交易时段无当日数据），代码: " + stockCode)
-		}
-		return res
+		return retErr("未获取到分时数据（可能代码不存在，或非交易时段无当日数据），代码: " + stockCode)
 	}
 	name, _ := d["name"].(string)
 	preClose := fenshiToFloat(d["preClose"])
@@ -595,7 +595,7 @@ func fenshiAnalyzeCore(stockCode string) *FenshiAnalysisResult {
 		return retErr("分时数据为空（接口返回无趋势数据），代码: " + stockCode)
 	}
 
-	res := &FenshiAnalysisResult{Code: stockCode, Name: name, PrevClose: preClose, Trend: make([]FenshiTick, 0, len(trends))}
+	resE := &FenshiAnalysisResult{Code: stockCode, Name: name, PrevClose: preClose, Trend: make([]FenshiTick, 0, len(trends))}
 	var openPx, highPx, lowPx, nowPx, avgPx, px15 float64
 	var idx15 int
 	// 解析 trends: "09:30,open,now,high,low,vol,amount,avg"
@@ -626,41 +626,41 @@ func fenshiAnalyzeCore(stockCode string) *FenshiAnalysisResult {
 			idx15 = i
 		}
 		_ = idx15
-		res.Trend = append(res.Trend, FenshiTick{Time: parts[0], Open: op, Now: np, High: hp, Low: lp, Vol: fenshiToFloat(parts[5]), Amt: fenshiToFloat(parts[6]), Avg: ap})
+		resE.Trend = append(resE.Trend, FenshiTick{Time: parts[0], Open: op, Now: np, High: hp, Low: lp, Vol: fenshiToFloat(parts[5]), Amt: fenshiToFloat(parts[6]), Avg: ap})
 	}
 	if openPx <= 0 || nowPx <= 0 {
 		return retErr("分时数据解析异常（价格均为0），代码: " + stockCode)
 	}
-	res.Price = nowPx
-	res.GapPct = (openPx/preClose - 1) * 100
-	res.ChangePct = (nowPx/preClose - 1) * 100
-	res.High = highPx
-	res.Low = lowPx
-	res.AvgPrice = avgPx
+	resE.Price = nowPx
+	resE.GapPct = (openPx/preClose - 1) * 100
+	resE.ChangePct = (nowPx/preClose - 1) * 100
+	resE.High = highPx
+	resE.Low = lowPx
+	resE.AvgPrice = avgPx
 	if avgPx > 0 {
-		res.AboveVwapP = (nowPx/avgPx - 1) * 100
+		resE.AboveVwapP = (nowPx/avgPx - 1) * 100
 	}
 	if px15 > 0 {
-		res.Mom15 = (nowPx/px15 - 1) * 100
+		resE.Mom15 = (nowPx/px15 - 1) * 100
 	}
 	if highPx > 0 {
-		res.PullbackPct = (1 - nowPx/highPx) * 100
+		resE.PullbackPct = (1 - nowPx/highPx) * 100
 	}
 	// 量比: 快照 f10
 	snapURL := fmt.Sprintf("https://push2.eastmoney.com/api/qt/stock/get?secid=%s&fields=f10,f12,f14", secid)
 	sm, err := fenshiGet(snapURL)
 	if err == nil {
 		if sd, _ := sm["data"].(map[string]any); sd != nil {
-			res.VolumeRate = fenshiToFloat(sd["f10"])
+			resE.VolumeRate = fenshiToFloat(sd["f10"])
 			if n, ok := sd["f14"].(string); ok {
-				res.Name = n
+				resE.Name = n
 			}
 		}
 	}
 
-	res.Signals = fenshiBuildSignals(res)
-	res.Advice = fenshiAdviceText(res)
-	return res
+	resE.Signals = fenshiBuildSignals(resE)
+	resE.Advice = fenshiAdviceText(resE)
+	return resE
 }
 
 // fenshiBuildSignals 按 fsa 验证结论生成信号
