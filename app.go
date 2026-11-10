@@ -1256,24 +1256,40 @@ func (a *App) domReady(ctx context.Context) {
 			time.Sleep(2 * time.Minute)
 			syncDailyKLineJob(a.ctx)
 		}()
-		// [v9e] 14:50 自动选股（工作日；开关在设置页，关闭时直接跳过）
-		a.cron.AddFunc("0 50 14 * * 1-5", func() {
+		// [v9f] 收盘后自动任务（工作日；时间/开关在设置页，默认17:40）
+		// cron秒级表达式按当前设置生成；设置变更后重启程序生效（或手动立即执行）
+		autoPickCronSpec := func() string {
+			_, _, runAt, _ := GetAutoPickSettingsFull()
+			t, err := time.Parse("15:04", runAt)
+			if err != nil {
+				t, _ = time.Parse("15:04", "17:40")
+			}
+			return fmt.Sprintf("0 %d %d * * 1-5", t.Minute(), t.Hour())
+		}
+		spec := autoPickCronSpec()
+		_, _, runAt0, _ := GetAutoPickSettingsFull()
+		logger.SugaredLogger.Infof("收盘后自动任务已注册: %s (每日 %s)", spec, runAt0)
+		a.cron.AddFunc(spec, func() {
 			if en, _ := GetAutoPickSettings(); en {
 				a.autoPickCronJob()
 			}
 		})
-		// 启动时若当天14:50已过且开了开关，补跑一次（只在14:50~收盘间补，其他时段不补）
+		// 启动时若当天设置时间已过且开了开关，补跑一次（窗口: 设置时间~当天20:00，夜间启动也能补上当天收盘数据）
 		go func() {
-			if en, _ := GetAutoPickSettings(); !en {
+			en, _, runAt, _ := GetAutoPickSettingsFull()
+			if !en {
 				return
 			}
 			now := time.Now()
 			if now.Weekday() == time.Saturday || now.Weekday() == time.Sunday {
 				return
 			}
-			// 当天14:50已过且在15:30前（错过不久，结果还有效）
-			deadline := time.Date(now.Year(), now.Month(), now.Day(), 15, 30, 0, 0, now.Location())
-			mark := time.Date(now.Year(), now.Month(), now.Day(), 14, 50, 0, 0, now.Location())
+			t, err := time.Parse("15:04", runAt)
+			if err != nil {
+				t, _ = time.Parse("15:04", "17:40")
+			}
+			mark := time.Date(now.Year(), now.Month(), now.Day(), t.Hour(), t.Minute(), 0, 0, now.Location())
+			deadline := time.Date(now.Year(), now.Month(), now.Day(), 20, 0, 0, 0, now.Location())
 			if now.After(mark) && now.Before(deadline) {
 				time.Sleep(90 * time.Second)
 				a.autoPickCronJob()

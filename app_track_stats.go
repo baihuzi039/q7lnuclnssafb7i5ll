@@ -103,6 +103,8 @@ func FillAllTrackHoldings() {
 
 // fillItemHoldings 单票增量回填；返回是否有更新
 func fillItemHoldings(item *models.TrackItem, batch models.TrackBatch) bool {
+	// [v9f] 名称走数据链：回填时顺带用东财现值刷新名称（改名/旧名自动修正，写库+名单表）
+	RefreshTrackItemName(item)
 	// 已填满则跳过
 	if item.FilledDays >= 8 {
 		// 次日细节只填一次
@@ -245,11 +247,11 @@ func (a *App) GetTrackStats() *[]models.TrackStrategyStat {
 		db.Dao.Raw(sql, st.ID).Scan(&stat.ItemCount)
 		// 次日收盘统计
 		type agg struct {
-			Cnt      int64
-			Win      int64
-			AvgPct   float64
-			AvgHigh  float64
-			WinHigh  int64
+			Cnt     int64
+			Win     int64
+			AvgPct  float64
+			AvgHigh float64
+			WinHigh int64
 		}
 		var a1 agg
 		db.Dao.Raw(`SELECT COUNT(*) as cnt,

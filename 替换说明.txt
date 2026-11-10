@@ -1,18 +1,21 @@
-替换说明（v9e.9.8 合并版 = v9e.9.5+9.6.1+9.7 一次换完）
+替换说明（v9f 收盘后自动任务-自动追加回测版）
 ================================================
-改动点：
-1. 【版本号自动跟随（本次新需求）】底栏绿色版本徽标改为动态读取CI注入的版本号：
-   以后每次打tag发包，exe底栏自动显示该tag版本（如 v9e.9.8），不再需要手动改代码。
-   未装到对应版本时徽标显示旧值=一眼识别exe新旧。
-2. （含v9e.9.7）策略跟踪「补齐历史」按钮：回测表空档日一键补齐批次+回填涨幅
-3. （含v9e.9.6.1）14:50自动选股自动写策略跟踪批次
-4. （含v9e.9.5）换手率显示口径修复（去双乘）
+本次真正变化的文件（11个）：
+1. app.go                 自动任务cron改为读设置时间(默认17:40)，补跑窗口扩到20:00
+2. app_auto_pick.go       收盘后流程：先全量同步日线→选股→建批次→自动追加回测表→通知；
+                          设置保存/读取支持 时间+追加开关
+3. app_track.go           批次列表附带itemCount明细数
+4. app_track_export.go    [新]自动追加回测表(一夜+牛指两模板,幂等防重复)；
+                          [新]东财实时名称刷新+存量错名修正RefreshAllTrackNames；
+                          导出支持牛指模板；空批次明确提示
+5. app_track_stats.go     回填时顺带刷新股票名称(名称走数据链)
+6. app_daily_kline.go     同步补写列扩为open/close/pct_change/turnover(治历史open=0坏行)
+7. backend/data/settings_api.go   Settings新列: auto_pick_time/auto_append_xlsx(自动迁移)
+8. frontend/src/components/TrackCenter.vue   "修正名称"按钮；导出Excel跳过空批次
+9. frontend/src/components/settings.vue      收盘后自动任务卡片: 运行时间选择+追加回测表开关
+10. frontend/wailsjs/go/main/App.js          绑定+SetAutoPickSettingsFull
+11. frontend/wailsjs/go/main/App.d.ts        绑定+SetAutoPickSettingsFull
 
-包含6个文件：
-  frontend/src/App.vue（动态版本徽标）
-  app_auto_pick.go（自动选股落批次，CI修复版）
-  app_track_export.go（历史区间补齐）
-  frontend/src/components/TrackCenter.vue（补齐历史按钮）
-  frontend/src/components/DataManage.vue（换手率修复+排序红涨绿跌）
-  frontend/wailsjs/go/main/App.js + App.d.ts（共2个绑定文件）
-实际7个文件（App.js与App.d.ts分开算）。
+与上包相同文件：无（本包全部为本次变化文件）
+模板文件：不包含，仍用你已放好的 D:\go-stock\data\templates\ 一夜持股.xlsx / 牛指T+1.xlsx
+VIP解锁4处补丁：本包文件不涉及，均保留在位

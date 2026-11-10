@@ -5,13 +5,12 @@ package main
 import (
 	"fmt"
 	"os"
-	"unicode/utf16"
-	"unicode/utf8"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
-
+	"unicode/utf16"
+	"unicode/utf8"
 
 	"golang.org/x/text/encoding/simplifiedchinese"
 
@@ -119,11 +118,22 @@ func (a *App) DelTrackStrategy(id uint) string {
 }
 
 // GetTrackBatches 某策略的批次列表（新批次在前）
-func (a *App) GetTrackBatches(strategyID uint) *[]models.TrackBatch {
+// [v9f] 附带 itemCount（明细数），前端导出跳过空批次用
+func (a *App) GetTrackBatches(strategyID uint) *[]map[string]interface{} {
 	defer PanicHandler()
 	var list []models.TrackBatch
 	db.Dao.Where("strategy_id = ?", strategyID).Order("trade_date DESC, id DESC").Find(&list)
-	return &list
+	out := make([]map[string]interface{}, 0, len(list))
+	for _, b := range list {
+		var cnt int64
+		db.Dao.Model(&models.TrackItem{}).Where("batch_id = ?", b.ID).Count(&cnt)
+		out = append(out, map[string]interface{}{
+			"id": b.ID, "strategyId": b.StrategyID, "tradeDate": b.TradeDate,
+			"source": b.Source, "remark": b.Remark, "createdAt": b.CreatedAt,
+			"itemCount": cnt,
+		})
+	}
+	return &out
 }
 
 // TrackItemRow 批次详情行（含批次信息，前端表格用）

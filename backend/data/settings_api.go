@@ -248,8 +248,13 @@ type Settings struct {
 	SignalScanIntervalSec int `json:"signalScanIntervalSec" gorm:"column:signal_scan_interval_sec;default:60"`
 
 	// [v9e] 14:50自动选股设置
-	AutoPickEnable     int    `json:"autoPickEnable" gorm:"column:auto_pick_enable;default:0"`   // 1=开
+	AutoPickEnable     int    `json:"autoPickEnable" gorm:"column:auto_pick_enable;default:0"`                    // 1=开
 	AutoPickNiuZhiMode string `json:"autoPickNiuZhiMode" gorm:"column:auto_pick_niuzhi_mode;size:8;default:'标准'"` // 严选/标准/全勤
+
+	// [v9f] 收盘后自动任务：HH:MM 24小时制（默认17:40，收盘后跑：先同步日线再选股再建批次再追加回测表）；
+	// AutoAppendXlsx=自动追加到 data/templates/<策略名>.xlsx 原版回测表（1=开）
+	AutoPickTime   string `json:"autoPickTime" gorm:"column:auto_pick_time;size:5;default:'17:40'"`
+	AutoAppendXlsx int    `json:"autoAppendXlsx" gorm:"column:auto_append_xlsx;default:1"`
 }
 
 // GetSignalScanIntervalSec 读取信号扫描节拍间隔（秒）；未配置或非法（<=0 / 超界）时回退默认值。

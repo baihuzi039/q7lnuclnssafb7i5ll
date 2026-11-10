@@ -885,6 +885,9 @@ export function ImportTdxDayFolder(arg1:Array<string>): Promise<string>;
 
 export function SetAutoPickSettings(arg1:boolean,arg2:string): Promise<string>;
 
+// [v9f] 完整保存自动任务设置（时间 HH:MM + 自动追加回测表开关）
+export function SetAutoPickSettingsFull(arg1:boolean,arg2:string,arg3:string,arg4:boolean): Promise<string>;
+
 export function GetAutoPickSettingsJSON(): Promise<any>;
 
 export function RunAutoPickNow(): Promise<string>;

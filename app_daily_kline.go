@@ -171,12 +171,12 @@ func upsertDailyKLine(stockCode, stockName string, limit int) int {
 			Turnover:  toF(k.TurnoverRate),
 		})
 	}
-	// v9e.9.2：已有行不再跳过，改为只补写 涨跌幅/换手率 两列（历史0值数据的补齐路径）
-	// 新行全量插入；旧行仅更新 pct_change/turnover（东财源带值；MAC源为0时不会破坏已有值——0行不更新由下方SQL的WHERE条件保证）
+	// v9e.9.2：已有行不再跳过，补写 涨跌幅/换手率；[v9f] 扩为 open/close/pct_change/turnover 四列
+	// （治历史坏行：open=0 导致策略跟踪"次日开盘"空缺，v9f 起同步顺带补齐；0值仍不更新保护已有值）
 	err := db.Dao.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "stock_code"}, {Name: "day"}},
-		DoUpdates: clause.AssignmentColumns([]string{"pct_change", "turnover"}),
-		Where:     clause.Where{Exprs: []clause.Expression{gorm.Expr("excluded.pct_change <> 0 OR excluded.turnover <> 0")}},
+		DoUpdates: clause.AssignmentColumns([]string{"open", "close", "pct_change", "turnover"}),
+		Where:     clause.Where{Exprs: []clause.Expression{gorm.Expr("excluded.open <> 0 OR excluded.close <> 0 OR excluded.pct_change <> 0 OR excluded.turnover <> 0")}},
 	}).CreateInBatches(&rows, 500).Error
 	if err != nil {
 		logger.SugaredLogger.Errorf("日线入库失败 %s(%s): %s", stockName, stockCode, err.Error())

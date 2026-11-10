@@ -2,13 +2,16 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/duke-git/lancet/v2/strutil"
 	"github.com/xuri/excelize/v2"
+	"go-stock/backend/data"
 	"go-stock/backend/db"
 	"go-stock/backend/logger"
 	"go-stock/backend/models"
@@ -20,6 +23,7 @@ import (
 // 输出位置：data/export/<策略名>_<批次日期>.xlsx
 
 // ExportTrackExcel 按原版模板导出指定批次，返回结果消息（成功=文件路径）
+// [v9f] 支持一夜/牛指两个策略；模板缺失/批次空时给明确路径提示
 func (a *App) ExportTrackExcel(strategyID, batchID uint) string {
 	defer PanicHandler()
 	var st models.TrackStrategy
@@ -33,13 +37,13 @@ func (a *App) ExportTrackExcel(strategyID, batchID uint) string {
 	var items []models.TrackItem
 	db.Dao.Where("batch_id = ?", batchID).Order("id ASC").Find(&items)
 	if len(items) == 0 {
-		return "批次无明细数据"
+		return "批次 " + batch.TradeDate + "（ID " + fmt.Sprint(batch.ID) + "）无明细数据，不能导出；请选有明细的批次"
 	}
 
 	tplDir := filepath.Join(filepath.Dir(db.GetDBPath()), "templates")
 	tplPath := filepath.Join(tplDir, st.Name+".xlsx")
 	if _, err := os.Stat(tplPath); err != nil {
-		return "缺少模板文件: " + tplPath + "（请把原版Excel改名为「" + st.Name + ".xlsx」放入该目录）"
+		return "缺少模板文件: " + tplPath + "（请把原版Excel改名为「" + st.Name + ".xlsx」放入该目录后重试）"
 	}
 
 	outDir := filepath.Join(filepath.Dir(db.GetDBPath()), "export")
@@ -50,14 +54,275 @@ func (a *App) ExportTrackExcel(strategyID, batchID uint) string {
 	switch st.Name {
 	case "一夜持股":
 		err = exportYiye(tplPath, outPath, items, batch)
+	case "牛指T+1":
+		err = exportNiuZhi(tplPath, outPath, items, batch)
 	default:
-		return "该策略的模板导出即将支持（当前先上：一夜持股）"
+		return "该策略暂不支持模板导出（当前支持：一夜持股/牛指T+1）"
 	}
 	if err != nil {
 		return "导出失败: " + err.Error()
 	}
 	openDir(outDir)
 	return outPath
+}
+
+// AppendBatchToXlsx [v9f] 把指定批次追加到模板副本并覆盖保存（自动追加入口，不走导出副本）
+// 幂等：若该批次日期+代码已存在于sheet中则跳过
+func AppendBatchToXlsx(strategyName string, batchID uint) string {
+	defer PanicHandler()
+	var st models.TrackStrategy
+	if err := db.Dao.Where("name = ?", strategyName).First(&st).Error; err != nil {
+		return ""
+	}
+	var batch models.TrackBatch
+	if err := db.Dao.First(&batch, batchID).Error; err != nil {
+		return ""
+	}
+	var items []models.TrackItem
+	db.Dao.Where("batch_id = ?", batchID).Order("id ASC").Find(&items)
+	if len(items) == 0 {
+		return ""
+	}
+	tplPath := filepath.Join(filepath.Dir(db.GetDBPath()), "templates", st.Name+".xlsx")
+	if _, err := os.Stat(tplPath); err != nil {
+		return "缺模板 " + tplPath + "（批次未写入回测表）"
+	}
+	var err error
+	switch st.Name {
+	case "一夜持股":
+		err = appendYiyeInPlace(tplPath, items, batch)
+	case "牛指T+1":
+		err = appendNiuZhiInPlace(tplPath, items, batch)
+	default:
+		return ""
+	}
+	if err != nil {
+		logger.SugaredLogger.Errorf("回测表追加失败[%s %s]: %s", st.Name, batch.TradeDate, err.Error())
+		return st.Name + " 回测表追加失败: " + err.Error()
+	}
+	return st.Name + " 回测表已追加 " + batch.TradeDate + "（" + fmt.Sprint(len(items)) + "只）"
+}
+
+// AutoAppendTrackXlsx [v9f] 收盘后自动任务用：把当日已建的两个批次（如存在且有明细）追加进各自模板
+func AutoAppendTrackXlsx(day string) string {
+	var msgs []string
+	for _, name := range []string{"一夜持股", "牛指T+1"} {
+		var st models.TrackStrategy
+		if err := db.Dao.Where("name = ?", name).First(&st).Error; err != nil {
+			continue
+		}
+		var batch models.TrackBatch
+		if err := db.Dao.Where("strategy_id = ? AND trade_date = ?", st.ID, day).First(&batch).Error; err != nil {
+			continue // 当日无批次（无信号/未开此策略）
+		}
+		if m := AppendBatchToXlsx(name, batch.ID); m != "" {
+			msgs = append(msgs, m)
+		}
+	}
+	return strings.Join(msgs, "；")
+}
+
+// batchExistsInSheet 幂等检查：A列是否已有 tradeDate 且同行B列为该代码
+func batchExistsInSheet(f *excelize.File, sheet, tradeDate, code6 string) bool {
+	rows, err := f.GetRows(sheet)
+	if err != nil {
+		return false
+	}
+	for _, r := range rows {
+		if len(r) >= 2 && r[0] == tradeDate && stockCode6(r[1]) == code6 {
+			return true
+		}
+	}
+	return false
+}
+
+// appendYiyeInPlace [v9f] 一夜：直接在模板文件内追加（不复制副本）
+func appendYiyeInPlace(tplPath string, items []models.TrackItem, batch models.TrackBatch) error {
+	f, err := excelize.OpenFile(tplPath)
+	if err != nil {
+		return fmt.Errorf("模板打开失败: %w", err)
+	}
+	defer f.Close()
+	const sheet = "五年明细"
+	start, srcRow, err := appendStartRow(f, sheet, 1)
+	if err != nil {
+		return err
+	}
+	added := 0
+	for _, it := range items {
+		if batchExistsInSheet(f, sheet, batch.TradeDate, stockCode6(it.StockCode)) {
+			continue
+		}
+		row := itoa(start)
+		f.SetCellStr(sheet, "A"+row, batch.TradeDate)
+		f.SetCellStr(sheet, "B"+row, stockCode6(it.StockCode))
+		f.SetCellStr(sheet, "C"+row, it.StockName)
+		f.SetCellStr(sheet, "D"+row, boardName(it.StockCode))
+		if it.Score != "" {
+			f.SetCellStr(sheet, "G"+row, it.Score)
+		}
+		base := it.BuyPrice
+		if base <= 0 {
+			if b, ok := trackBasePrice(it, batch); ok {
+				base = b
+			}
+		}
+		if base > 0 {
+			f.SetCellFloat(sheet, "H"+row, base, 2, 64)
+		}
+		if it.NextOpenPct != 0 && base > 0 {
+			f.SetCellFloat(sheet, "I"+row, base*(1+it.NextOpenPct/100), 2, 64)
+		}
+		if it.NextHighPct != 0 && base > 0 {
+			f.SetCellFloat(sheet, "J"+row, base*(1+it.NextHighPct/100), 2, 64)
+		}
+		if it.NextClosePct != 0 && base > 0 {
+			f.SetCellFloat(sheet, "K"+row, base*(1+it.NextClosePct/100), 2, 64)
+		}
+		f.SetCellStr(sheet, "O"+row, nextNote(batch.TradeDate))
+		start++
+		added++
+	}
+	if added == 0 {
+		return nil // 幂等：全部已存在
+	}
+	copyRowStyles(f, sheet, srcRow, srcRow+1, start-1, 15)
+	return f.Save()
+}
+
+// appendStartRow 追加起始行 = A列最后一个非空行+1；srcRow=最后一条数据行（样式源）
+func appendStartRow(f *excelize.File, sheet string, colA int) (start, srcRow int, err error) {
+	rows, err := f.GetRows(sheet)
+	if err != nil {
+		return 0, 0, err
+	}
+	start = len(rows) + 1
+	src := 0
+	for r := len(rows); r >= 1; r-- {
+		if len(rows[r-1]) >= colA && rows[r-1][colA-1] != "" {
+			start = r + 1
+			src = r
+			break
+		}
+	}
+	return start, src, nil
+}
+
+// appendNiuZhiInPlace [v9f] 牛指：追加到「近五年回测明细」sheet
+// 列(18): A信号日 B代码 C名称 D星级 E买入价 F次日 G次日开盘 H开盘卖收益% I次日最高 J最高卖收益% K次日收盘 L收盘卖收益% M买入日涨停 N次日跌停
+func appendNiuZhiInPlace(tplPath string, items []models.TrackItem, batch models.TrackBatch) error {
+	f, err := excelize.OpenFile(tplPath)
+	if err != nil {
+		return fmt.Errorf("模板打开失败: %w", err)
+	}
+	defer f.Close()
+	const sheet = "近五年回测明细"
+	start, srcRow, err := appendStartRow(f, sheet, 1)
+	if err != nil {
+		return err
+	}
+	added := 0
+	for _, it := range items {
+		if batchExistsInSheet(f, sheet, batch.TradeDate, stockCode6(it.StockCode)) {
+			continue
+		}
+		row := itoa(start)
+		f.SetCellStr(sheet, "A"+row, batch.TradeDate)
+		f.SetCellStr(sheet, "B"+row, stockCode6(it.StockCode))
+		f.SetCellStr(sheet, "C"+row, it.StockName)
+		if it.Score != "" {
+			f.SetCellStr(sheet, "D"+row, it.Score)
+		}
+		base := it.BuyPrice
+		if base <= 0 {
+			if b, ok := trackBasePrice(it, batch); ok {
+				base = b
+			}
+		}
+		if base > 0 {
+			f.SetCellFloat(sheet, "E"+row, base, 2, 64)
+		}
+		// F 次日日期（买入日下一交易日，从K线取；取不到留空）
+		var nextRow models.DailyKLine
+		if err := db.Dao.Where("stock_code = ? AND day > ?", it.StockCode, batch.TradeDate).Order("day ASC").First(&nextRow).Error; err == nil {
+			f.SetCellStr(sheet, "F"+row, nextRow.Day)
+		}
+		// G/H 次日开盘价与开盘卖收益%；I/J 次日最高；K/L 次日收盘（与原表一致：价格+百分数）
+		if it.NextOpenPct != 0 && base > 0 {
+			f.SetCellFloat(sheet, "G"+row, base*(1+it.NextOpenPct/100), 2, 64)
+			f.SetCellFloat(sheet, "H"+row, it.NextOpenPct/100, 6, 64)
+		}
+		if it.NextHighPct != 0 && base > 0 {
+			f.SetCellFloat(sheet, "I"+row, base*(1+it.NextHighPct/100), 2, 64)
+			f.SetCellFloat(sheet, "J"+row, it.NextHighPct/100, 6, 64)
+		}
+		if it.NextClosePct != 0 && base > 0 {
+			f.SetCellFloat(sheet, "K"+row, base*(1+it.NextClosePct/100), 2, 64)
+			f.SetCellFloat(sheet, "L"+row, it.NextClosePct/100, 6, 64)
+		}
+		start++
+		added++
+	}
+	if added == 0 {
+		return nil
+	}
+	copyRowStyles(f, sheet, srcRow, srcRow+1, start-1, 18)
+	return f.Save()
+}
+
+// exportNiuZhi [v9f] 牛指：复制模板→追加→另存（手动导出走副本，不污染模板）
+func exportNiuZhi(tplPath, outPath string, items []models.TrackItem, batch models.TrackBatch) error {
+	data, err := os.ReadFile(tplPath)
+	if err != nil {
+		return err
+	}
+	f, err := excelize.OpenReader(bytes.NewReader(data))
+	if err != nil {
+		return fmt.Errorf("模板打开失败: %w", err)
+	}
+	defer f.Close()
+	const sheet = "近五年回测明细"
+	start, srcRow, err := appendStartRow(f, sheet, 1)
+	if err != nil {
+		return err
+	}
+	for _, it := range items {
+		row := itoa(start)
+		f.SetCellStr(sheet, "A"+row, batch.TradeDate)
+		f.SetCellStr(sheet, "B"+row, stockCode6(it.StockCode))
+		f.SetCellStr(sheet, "C"+row, it.StockName)
+		if it.Score != "" {
+			f.SetCellStr(sheet, "D"+row, it.Score)
+		}
+		base := it.BuyPrice
+		if base <= 0 {
+			if b, ok := trackBasePrice(it, batch); ok {
+				base = b
+			}
+		}
+		if base > 0 {
+			f.SetCellFloat(sheet, "E"+row, base, 2, 64)
+		}
+		var nextRow models.DailyKLine
+		if err := db.Dao.Where("stock_code = ? AND day > ?", it.StockCode, batch.TradeDate).Order("day ASC").First(&nextRow).Error; err == nil {
+			f.SetCellStr(sheet, "F"+row, nextRow.Day)
+		}
+		if it.NextOpenPct != 0 && base > 0 {
+			f.SetCellFloat(sheet, "G"+row, base*(1+it.NextOpenPct/100), 2, 64)
+			f.SetCellFloat(sheet, "H"+row, it.NextOpenPct/100, 6, 64)
+		}
+		if it.NextHighPct != 0 && base > 0 {
+			f.SetCellFloat(sheet, "I"+row, base*(1+it.NextHighPct/100), 2, 64)
+			f.SetCellFloat(sheet, "J"+row, it.NextHighPct/100, 6, 64)
+		}
+		if it.NextClosePct != 0 && base > 0 {
+			f.SetCellFloat(sheet, "K"+row, base*(1+it.NextClosePct/100), 2, 64)
+			f.SetCellFloat(sheet, "L"+row, it.NextClosePct/100, 6, 64)
+		}
+		start++
+	}
+	copyRowStyles(f, sheet, srcRow, srcRow+1, start-1, 18)
+	return f.SaveAs(outPath)
 }
 
 // exportYiye 一夜持股：追加到「五年明细」sheet
@@ -75,19 +340,10 @@ func exportYiye(tplPath, outPath string, items []models.TrackItem, batch models.
 	}
 	defer f.Close()
 	const sheet = "五年明细"
-	rows, err := f.GetRows(sheet)
+	start, srcRow, err := appendStartRow(f, sheet, 1)
 	if err != nil {
 		return err
 	}
-	// 追加起始行 = 最后一个非空A列行 + 1
-	start := len(rows) + 1
-	for r := len(rows); r >= 1; r-- {
-		if len(rows[r-1]) > 0 && rows[r-1][0] != "" {
-			start = r + 1
-			break
-		}
-	}
-	srcRow := start - 1 // 样式来源行（最后一条数据行）
 
 	for _, it := range items {
 		row := itoa(start)
@@ -294,4 +550,74 @@ func (a *App) BackfillTrackRange(strategyName, startDate, endDate string) string
 		out += "\n" + strings.Join(notes, "\n")
 	}
 	return out
+}
+
+// ==================================================================
+// [v9f] 股票名称走数据链：东财实时接口现取当前名称 + 存量批次名称修正
+// 背景：批次 StockName 在建批次时从 tushare_stock_basic 名单快照写死，
+// 股票改名/名单过期导致跟踪页显示旧名错名（如 002270 显示"华明装备"实为"越疆科技"）。
+// 修复：建批次/回填时用东财现值刷新；提供 RefreshAllTrackNames 一次性修正存量。
+// ==================================================================
+
+// eastMoneyRealtimeName 东财 push2 单票接口取当前名称（f58=名称），失败返回空
+// [v9f] 复用共享 resty client 与 KLineApi 的 secid 转换
+func eastMoneyRealtimeName(stockCode string) string {
+	api := &EastMoneyKLineApi{}
+	secid := api.convertStockCode(stockCode)
+	if secid == "" {
+		return ""
+	}
+	u := "https://push2.eastmoney.com/api/qt/stock/get?secid=" + secid + "&fields=f58&invt=2&fltt=2"
+	resp, err := data.SharedHTTPClient.R().SetHeader("User-Agent",
+		"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36").Get(u)
+	if err != nil || resp == nil {
+		logger.SugaredLogger.Debugf("取实时名称失败 %s: %v", stockCode, err)
+		return ""
+	}
+	var jr struct {
+		Data struct {
+			F58 string `json:"f58"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(resp.Body(), &jr); err != nil {
+		return ""
+	}
+	return jr.Data.F58
+}
+
+// RefreshTrackItemName 回填前刷新单票名称（新名非空且与旧名不同才写库）
+func RefreshTrackItemName(item *models.TrackItem) {
+	name := eastMoneyRealtimeName(item.StockCode)
+	if strutil.IsNotBlank(name) && name != item.StockName {
+		logger.SugaredLogger.Infof("股票名称修正: %s %s → %s", item.StockCode, item.StockName, name)
+		item.StockName = name
+		db.Dao.Model(item).Update("stock_name", name)
+		// 名单表也同步刷新，下次引擎选股直接用新名
+		db.Dao.Model(&data.StockBasic{}).Where("ts_code LIKE ?", stockCode6(item.StockCode)+"%").Update("name", name)
+	}
+}
+
+// RefreshAllTrackNames [v9f] 一次性修正全部批次存量错名（前端"修正名称"按钮；也供回填调用）
+func (a *App) RefreshAllTrackNames() string {
+	defer PanicHandler()
+	var items []models.TrackItem
+	db.Dao.Find(&items)
+	fixed, total := 0, len(items)
+	seen := map[string]bool{}
+	for i := range items {
+		code := stockCode6(items[i].StockCode)
+		if seen[code] {
+			continue // 同代码只查一次实时接口
+		}
+		seen[code] = true
+		before := items[i].StockName
+		RefreshTrackItemName(&items[i])
+		if items[i].StockName != before {
+			fixed++
+		}
+		time.Sleep(30 * time.Millisecond) // 控频
+	}
+	msg := fmt.Sprintf("名称核对完成: 共%d只(去重%d)，修正%d只", total, len(seen), fixed)
+	logger.SugaredLogger.Infof("%s", msg)
+	return msg
 }

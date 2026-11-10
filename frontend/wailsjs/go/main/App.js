@@ -1758,6 +1758,11 @@ export function SetAutoPickSettings(arg1,arg2) {
   return window['go']['main']['App']['SetAutoPickSettings'](arg1,arg2);
 }
 
+// [v9f] 完整保存自动任务设置（时间 HH:MM + 自动追加回测表开关）
+export function SetAutoPickSettingsFull(arg1,arg2,arg3,arg4) {
+  return window['go']['main']['App']['SetAutoPickSettingsFull'](arg1,arg2,arg3,arg4);
+}
+
 export function GetAutoPickSettingsJSON() {
   return window['go']['main']['App']['GetAutoPickSettingsJSON']();
 }

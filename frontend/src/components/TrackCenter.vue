@@ -61,6 +61,7 @@
           <n-button v-if="isOvernightTab || isNiuZhiTab" size="small" type="info" ghost :loading="backfilling" @click="doBackfill">补齐历史</n-button>
           <n-button size="small" type="warning" ghost :loading="exporting" @click="exportCSV">导出 CSV</n-button>
           <n-button size="small" type="success" ghost :loading="exportingXlsx" @click="exportXlsxTop">导出 Excel</n-button>
+          <n-tooltip trigger="hover"><template #trigger><n-button size="small" type="warning" ghost :loading="fixingNames" @click="fixNames">修正名称</n-button></template>用东财实时行情核对全部批次股票名称并修正（治改名/旧名单导致的错名，几千只约需几分钟）</n-tooltip>
           <n-button size="small" @click="refresh">刷新</n-button>
         </n-space>
         <n-text depth="3" style="font-size: 12px;">
@@ -149,7 +150,7 @@ import {onBeforeUnmount, onMounted, ref, h, computed} from 'vue'
 import {
   ListTrackStrategies, AddTrackStrategy, DelTrackStrategy, GetTrackBatches,
   GetRecentTrackItems, GetTrackStats, CreateTrackBatch, ImportTrackInboxFolder,
-  OpenTrackInboxDir, ExportTrackCSV, ExportTrackExcel, DeleteTrackBatch, DeleteTrackItem,
+  OpenTrackInboxDir, ExportTrackCSV, ExportTrackExcel, DeleteTrackBatch, DeleteTrackItem, RefreshAllTrackNames,
   RenameTrackStrategy,
   RunOvernightScan, RunOvernightAppendCloseSheet, RunOvernightScanJSON,
   RunNiuZhiScanJSON, BackfillTrackRange
@@ -540,6 +541,16 @@ function openInboxDir() {
 }
 
 const backfilling = ref(false)
+// [v9f] 修正名称
+const fixingNames = ref(false)
+function fixNames() {
+  fixingNames.value = true
+  RefreshAllTrackNames().then((res) => {
+    fixingNames.value = false
+    if (window.$message) window.$message.success(res || '完成')
+    refresh()
+  }).catch(() => { fixingNames.value = false })
+}
 async function doBackfill() {
   const st = (strategies.value || []).find(s => String(s.id) === String(activeStrategy.value))
   if (!st) return
@@ -587,7 +598,12 @@ function exportXlsxTop() {
     window.$message ? window.$message.warning('当前策略没有批次，先导入或新建批次') : alert('当前策略没有批次')
     return
   }
-  const latest = batches.value[0] // 已按日期倒序，取最新
+  // [v9f] 跳过空批次，取最近一个有明细的批次（避免点导出撞上空批次报"无明细"）
+  const latest = batches.value.find(b => (b.itemCount || 0) > 0 || (b.item_count || 0) > 0)
+  if (!latest) {
+    window.$message ? window.$message.warning('最近的批次均无明细数据，请先导入或新建明细') : alert('最近的批次均无明细数据')
+    return
+  }
   exportExcel(latest)
 }
 function exportExcel(row) {

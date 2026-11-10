@@ -115,8 +115,10 @@ const formRef = ref(null)
 const autoPickRunning = ref(false)
 const autoPickMsg = ref('')
 const autoPickAlertType = ref('info')
+// [v9f] 保存含时间与自动追加回测表开关的完整设置
 function onAutoPickChange() {
-  SetAutoPickSettings(formValue.value.autoPick.enable, formValue.value.autoPick.niuzhiMode).then((res) => {
+  SetAutoPickSettingsFull(formValue.value.autoPick.enable, formValue.value.autoPick.niuzhiMode,
+    formValue.value.autoPick.runAt || '17:40', formValue.value.autoPick.appendXlsx !== false).then((res) => {
     if (window.$message && res) window.$message.success(res)
   })
 }
@@ -133,6 +135,8 @@ const formValue = ref({
   autoPick: {
     enable: false,
     niuzhiMode: '标准',
+    runAt: '17:40',
+    appendXlsx: true,
   },
   tushareToken: '',
   iwencaiApiKey: '',
@@ -323,7 +327,8 @@ onMounted(() => {
     }
     // [v9e] 自动选股设置回填
     GetAutoPickSettingsJSON().then((ap) => {
-      formValue.value.autoPick = { enable: ap.enabled === true, niuzhiMode: ap.niuzhiMode || '标准' }
+      formValue.value.autoPick = { enable: ap.enabled === true, niuzhiMode: ap.niuzhiMode || '标准',
+        runAt: ap.runAt || '17:40', appendXlsx: ap.appendXlsx !== false }
     })
     formValue.value.updateBasicInfoOnStart = res.updateBasicInfoOnStart
     formValue.value.refreshInterval = res.refreshInterval
@@ -1212,23 +1217,30 @@ function deletePrompt(ID) {
           </n-grid>
         </n-card>
 
-        <n-card :title="() => h(NTag, { type: 'warning', bordered: false }, () => '14:50自动选股')" size="small">
+        <n-card :title="() => h(NTag, { type: 'warning', bordered: false }, () => '收盘后自动任务')" size="small">
           <n-grid :cols="24" :x-gap="24" style="text-align: left">
             <n-form-item-gi :span="4" label="自动选股：" path="autoPick.enable">
               <n-switch v-model:value="formValue.autoPick.enable" @update:value="onAutoPickChange"/>
             </n-form-item-gi>
-            <n-form-item-gi :span="6" label="牛指模式：" path="autoPick.niuzhiMode">
-              <n-select v-model:value="formValue.autoPick.niuzhiMode" size="small" style="width: 130px;"
+            <n-form-item-gi :span="5" label="运行时间：" path="autoPick.runAt">
+              <n-time-picker v-model:formatted-value="formValue.autoPick.runAt" value-format="HH:mm" format="HH:mm"
+                             style="width: 110px;" @update:formatted-value="onAutoPickChange"/>
+            </n-form-item-gi>
+            <n-form-item-gi :span="5" label="牛指模式：" path="autoPick.niuzhiMode">
+              <n-select v-model:value="formValue.autoPick.niuzhiMode" size="small" style="width: 110px;"
                         :options="[{label:'严选',value:'严选'},{label:'标准',value:'标准'},{label:'全勤',value:'全勤'}]"
                         @update:value="onAutoPickChange"/>
+            </n-form-item-gi>
+            <n-form-item-gi :span="5" label="追加回测表：" path="autoPick.appendXlsx">
+              <n-switch v-model:value="formValue.autoPick.appendXlsx" @update:value="onAutoPickChange"/>
             </n-form-item-gi>
             <n-form-item-gi :span="4" label="手动跑一次：">
               <n-button size="small" type="primary" ghost :loading="autoPickRunning" @click="runAutoPickNow">立即执行</n-button>
             </n-form-item-gi>
             <n-form-item-gi :span="22">
               <n-text depth="3" style="font-size: 12px;">
-                开启后每个工作日 14:50 自动跑一夜持股+牛指T+1（两引擎均长窗口对账通过），结果弹窗+桌面通知+飞书推送（需开启飞书推送）。
-                切换开关或模式后立即保存。一夜持股无模式概念，牛指按此处模式执行。
+                开启后每个工作日到设定时间（默认17:40，收盘后）自动：同步日线到最新 → 跑一夜持股+牛指T+1 → 自动建当日批次 → 自动追加数据目录 templates\<策略名>.xlsx 回测表 → 弹窗+桌面通知+飞书推送。
+                导出时拿到的回测表即最新。切换开关/时间/模式后立即保存，重启程序后生效新时间。模板文件需自行放在数据目录 templates 下。
               </n-text>
             </n-form-item-gi>
             <n-form-item-gi :span="22" v-if="autoPickMsg">
