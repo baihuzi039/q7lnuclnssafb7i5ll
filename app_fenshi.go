@@ -420,7 +420,21 @@ func (a *App) FenshiScanCandidates() []FenshiCand {
 }
 
 // FenshiAnalyzeStock 个股实时分时分析（核心入口）
+// FenshiAnalyzeStock 入口：VPN分流不稳定导致"时好时坏"，外层重试2轮大幅提高成功率
 func (a *App) FenshiAnalyzeStock(stockCode string) *FenshiAnalysisResult {
+	var r *FenshiAnalysisResult
+	for round := 1; round <= 2; round++ {
+		r = fenshiAnalyzeCore(stockCode)
+		if r != nil && r.ErrMsg == "" {
+			return r
+		}
+		logger.SugaredLogger.Warnf("FenshiAnalyzeStock 第%d轮失败，重试", round)
+	}
+	return r
+}
+
+// fenshiAnalyzeCore 单轮分析：东财→腾讯→新浪三级兜底
+func fenshiAnalyzeCore(stockCode string) *FenshiAnalysisResult {
 	secid := fenshiSecid(stockCode)
 	url := fmt.Sprintf("https://push2his.eastmoney.com/api/qt/stock/trends2/get?secid=%s&fields1=f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f11,f12,f13&fields2=f51,f52,f53,f54,f55,f56,f57,f58&iscr=0&ndays=1", secid)
 	retErr := func(msg string) *FenshiAnalysisResult {
@@ -642,7 +656,7 @@ func fenshiAnalyzeFromSina(stockCode string) (*FenshiAnalysisResult, error) {
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36")
 	resp, err := fenshiPlainClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("新浪K线请求失败（检查代理/加速器）: %v", err)
+		return nil, fmt.Errorf("新浪K线请求失败(检查代理/VPN分流规则是否含sina): %v", err)
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
