@@ -8,6 +8,7 @@
             <n-input v-model:value="manualCode" placeholder="输入代码如 600519" size="small" @keyup.enter="addStock" clearable />
             <n-button type="primary" size="small" :loading="adding" @click="addStock">添加</n-button>
           </div>
+          <div v-if="addMsg" class="add-msg" :class="addMsgOk ? 'ok' : 'err'">{{ addMsg }}</div>
           <n-data-table :columns="watchColumns" :data="watchlist" :max-height="520" size="small" :row-props="rowProps" striped />
         </n-card>
       </div>
@@ -84,17 +85,29 @@ async function loadWatchlist() {
   }
 }
 
+const addMsg = ref("");
+const addMsgOk = ref(false);
+
 async function addStock() {
   const code = (manualCode.value || "").trim();
   if (!code) return;
   adding.value = true;
+  addMsg.value = "";
   try {
     const msg = await FenshiWatchlistAdd(code);
-    if (msg && msg.indexOf("成功") >= 0) {
+    // v9f.18.1：无论成败都展示后端返回原因，不再静默；
+    // "已经关注了"也算成功（照常分析），只有失败/错误/VIP限制才算失败
+    addMsg.value = msg || "（后端无返回）";
+    const failed = !msg || msg.indexOf("失败") >= 0 || msg.indexOf("错误") >= 0 || msg.indexOf("VIP") >= 0;
+    addMsgOk.value = !failed;
+    if (!failed) {
       manualCode.value = "";
       await loadWatchlist();
       await analyze(code);
     }
+  } catch (e) {
+    addMsg.value = "添加调用失败: " + (e && e.message ? e.message : e);
+    addMsgOk.value = false;
   } finally {
     adding.value = false;
   }
@@ -151,6 +164,9 @@ function ptsPath(trend, col) {
 .left-pane { min-width: 0; }
 .right-pane { min-width: 0; }
 .add-row { display: flex; gap: 8px; margin-bottom: 8px; }
+.add-msg { font-size: 12px; margin-bottom: 6px; }
+.add-msg.ok { color: #22a45d; }
+.add-msg.err { color: #e04b4b; }
 .quote-line { font-size: 15px; margin-bottom: 6px; }
 .quote-line .price { font-size: 24px; font-weight: bold; margin-right: 6px; }
 .up { color: #e04b4b; }

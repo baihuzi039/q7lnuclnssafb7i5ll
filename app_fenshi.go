@@ -29,6 +29,7 @@ import (
 
 	utls "github.com/refraction-networking/utls"
 
+	"go-stock/backend/db"
 	stockdata "go-stock/backend/data"
 	"go-stock/backend/logger"
 )
@@ -262,7 +263,11 @@ func fenshiAnalyzeFromTencent(stockCode string) (*FenshiAnalysisResult, error) {
 
 // fenshiTencentCode 证券代码转腾讯格式：600519→sh600519, 000001→sz000001, 300001→sz300001, 830001→bj830001
 func fenshiTencentCode(code string) (string, bool) {
-	code = strings.TrimSpace(code)
+	code = strings.TrimSpace(strings.ToLower(code))
+	// v9f.17.1：自选股表里的代码带 sh/sz/bj 前缀（如 sh600246），先剥前缀再判长度
+	for _, p := range []string{"sh", "sz", "bj"} {
+		code = strings.TrimPrefix(code, p)
+	}
 	if len(code) != 6 {
 		return "", false
 	}
@@ -294,9 +299,80 @@ func (a *App) FenshiWatchlist() []map[string]any {
 	return out
 }
 
-// FenshiWatchlistAdd 添加自选（复用原版 Follow，含主站名称/现价拉取）
+// FenshiWatchlistAdd 添加自选（v9f.18：不再走原版 Follow——它会先请求原作者行情接口，
+// 在本机网络环境下必失败导致"关注失败"且前端静默无反应。改为直接写 followed_stock 表，
+// 名称/现价用腾讯快照获取（本机实测可用），快照失败也照样入库，绝不静默失败）
 func (a *App) FenshiWatchlistAdd(stockCode string) string {
-	return stockdata.NewStockDataApi().Follow(stockCode)
+	code, ok := fenshiTencentCode(stockCode)
+	if !ok {
+		return "代码格式错误: " + stockCode + "（请输入6位A股代码，如 600519 或 sh600519）"
+	}
+	// 查重（与原版 Follow 一致：is_del=0 的有效关注）
+	var cnt int64
+	db.Dao.Model(&stockdata.FollowedStock{}).Where("stock_code = ? AND is_del = ?", code, 0).Count(&cnt)
+	if cnt > 0 {
+		return "已经关注了: " + code
+	}
+	// VIP 限制与原版一致（非 VIP 最多63只）
+	var total int64
+	db.Dao.Model(&stockdata.FollowedStock{}).Where("is_del = ?", 0).Count(&total)
+	if _, active := stockdata.EffectiveSponsorVipLevel(); !active && total >= 63 {
+		return "最多只能关注63只股票，升级VIP后不限数量"
+	}
+	name, price := "", 0.0
+	if n, p, _, e := fenshiTencentSnap(code); e == nil {
+		name, price = n, p
+	}
+	var maxSort int64
+	db.Dao.Model(&stockdata.FollowedStock{}).Raw("select max(sort) as sort from followed_stock").Scan(&maxSort)
+	err := db.Dao.Create(&stockdata.FollowedStock{
+		StockCode:          code,
+		Name:               name,
+		Price:              price,
+		Time:               time.Now(),
+		Sort:               maxSort + 1,
+		AlarmChangePercent: 3,
+		AlarmPrice:         price + 1,
+	}).Error
+	if err != nil {
+		return "关注失败: " + err.Error()
+	}
+	logger.SugaredLogger.Infof("FenshiWatchlistAdd 成功: %s %s", code, name)
+	return "关注成功: " + code + " " + name
+}
+
+// fenshiTencentSnap 腾讯快照：返回(名称, 现价, 昨收)（v9f.18 新增，本机实测可用路径）
+func fenshiTencentSnap(tcode string) (string, float64, float64, error) {
+	snapURL := fmt.Sprintf("https://qt.gtimg.cn/q=%s", tcode)
+	req, _ := http.NewRequest("GET", snapURL, nil)
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
+	resp, err := fenshiPlainClient.Do(req)
+	if err != nil {
+		return "", 0, 0, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", 0, 0, err
+	}
+	decoded := stockdata.GB18030ToUTF8(body)
+	s := string(decoded)
+	i := strings.Index(s, "\"")
+	if i < 0 {
+		return "", 0, 0, fmt.Errorf("腾讯快照无引号体")
+	}
+	s = s[i+1:]
+	if j := strings.LastIndex(s, "\""); j >= 0 {
+		s = s[:j]
+	}
+	parts := strings.Split(s, "~")
+	if len(parts) < 5 {
+		return "", 0, 0, fmt.Errorf("腾讯快照字段不足")
+	}
+	name := parts[1]
+	now, _ := strconv.ParseFloat(parts[3], 64)
+	preClose, _ := strconv.ParseFloat(parts[4], 64)
+	return name, now, preClose, nil
 }
 
 // FenshiWatchlistRemove 删除自选
