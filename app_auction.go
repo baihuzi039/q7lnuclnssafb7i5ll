@@ -148,21 +148,29 @@ func (a *App) SnapshotAuctionNow() string {
 	if auctionSnapRunning {
 		return "竞价快照正在抓取中，请稍候"
 	}
-	// 同步判断非交易日
+	// v9e.9：判断逻辑全部挪进goroutine（此前同步Count可能被导入/同步的长事务锁库阻塞，导致按钮没反应）
 	now := time.Now()
-	wd := now.Weekday()
-	if wd == time.Saturday || wd == time.Sunday {
-		logger.SugaredLogger.Infof("非交易日，跳过竞价快照")
-		return "今天不是交易日（周末），没有竞价数据可抓"
-	}
-	// 同步判断今日已有数据
 	td := now.Format("2006-01-02")
-	var cnt int64
-	db.Dao.Model(&models.DailyAuction{}).Where("trade_date = ?", td).Count(&cnt)
-	if cnt > 0 {
-		logger.SugaredLogger.Infof("今日竞价快照已存在(%d条)，跳过", cnt)
-		return fmt.Sprintf("今日(%s)竞价快照已存在 %d 条，无需重抓", td, cnt)
-	}
+	go func() {
+		defer PanicHandler()
+		wd := now.Weekday()
+		if wd == time.Saturday || wd == time.Sunday {
+			a.EmitAuctionMsg("今天不是交易日（周末），没有竞价数据可抓")
+			return
+		}
+		var cnt int64
+		if db.Dao != nil {
+			db.Dao.Model(&models.DailyAuction{}).Where("trade_date = ?", td).Count(&cnt)
+		}
+		if cnt > 0 {
+			a.EmitAuctionMsg(fmt.Sprintf("今日(%s)竞价快照已存在 %d 条，无需重抓", td, cnt))
+			return
+		}
+		auctionSnapRunning = true
+		defer func() { auctionSnapRunning = false }()
+		a.doSnapshotAuction()
+	}()
+	return "指令已收到，结果稍后弹窗（非交易日/已存在会直接提示；开抓则完成后提示）"
 	auctionSnapRunning = true
 	go func() {
 		defer func() { auctionSnapRunning = false }()
@@ -246,4 +254,13 @@ func (a *App) GetAuctionCount() map[string]interface{} {
 	out["days"] = days
 	out["latest"] = latest
 	return out
+}
+
+// EmitAuctionMsg v9e.9 竞价提示弹窗事件（前端message样式醒目）
+func (a *App) EmitAuctionMsg(msg string) {
+	if a == nil || a.ctx == nil {
+		logger.SugaredLogger.Infof("竞价提示: %s", msg)
+		return
+	}
+	runtime.EventsEmit(a.ctx, "auctionMsg", msg)
 }

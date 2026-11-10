@@ -1,6 +1,7 @@
 <template>
   <n-layout style="padding: 10px;">
     <n-card title="本地日线数据库" size="small" style="margin-bottom: 10px;">
+
       <n-space vertical size="large">
         <n-space :size="24">
           <n-statistic label="沪深A股" :value="status.totalAStock || 0" />
