@@ -1778,3 +1778,8 @@ export function FetchSingleStockKLine(arg1:string, arg2:number) {
 export function BackfillTrackRange(arg1:string, arg2:string, arg3:string) {
   return window['go']['main']['App']['BackfillTrackRange'](arg1, arg2, arg3);
 }
+
+// [v9f.2] 全量回填所有批次涨幅（刷新按钮先回填再取数）
+export function FillAllTrackHoldings() {
+  return window['go']['main']['App']['FillAllTrackHoldings']();
+}

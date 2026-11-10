@@ -1,13 +1,13 @@
-替换说明（v9f.1 CI修复补丁 = v9f + CI#61修复）
+替换说明（v9f.2 合并版 = v9f.1 CI修复 + v9f.2 刷新回填 + v9f.3 切页卡顿优化）
 ================================================
-CI#61 报错: app_track_export.go:565:10 undefined: EastMoneyKLineApi
-根因: EastMoneyKLineApi 是 backend/data 包类型，main 包裸引用未带包名；
-     convertStockCode 方法未导出，main 包无法调用。
-修复: data 包新增导出包装 ConvertStockCodeToEMSecid；main 包改经 data. 调用。
+本次真正变化的文件（7个）：
+1. app_track_export.go                       名称刷新修正（CI#61修复）
+2. backend/data/eastmoney_kline_api.go       新增导出 ConvertStockCodeToEMSecid
+3. frontend/src/components/TrackCenter.vue   刷新按钮先回填涨幅再取数
+4. frontend/wailsjs/go/main/App.js           绑定+FillAllTrackHoldings / SetAutoPickSettingsFull
+5. frontend/wailsjs/go/main/App.d.ts         同上
+6. app_daily_kline.go                        状态查询60秒缓存+同步完成强刷（切页卡顿优化）
+7. app_auction.go                            竞价统计60秒缓存+导入/快照完成强刷
 
-本次真正变化的文件（2个）：
-1. app_track_export.go               名称刷新改走 data.ConvertStockCodeToEMSecid
-2. backend/data/eastmoney_kline_api.go   新增导出函数 ConvertStockCodeToEMSecid
-
-与上包(v9f)相同文件：其余 9 个文件与 v9f 包完全一致，无需重复覆盖
-（若嫌麻烦也可直接用本包2文件覆盖，前提是 v9f 其余文件已提交）
+与上包相同文件：v9f 首发的其余 9 个文件（app.go/app_auto_pick.go/app_track.go/
+app_track_stats.go/settings_api.go/settings.vue）无变化，若 v9f 已提交过则无需再覆盖。

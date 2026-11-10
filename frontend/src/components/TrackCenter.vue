@@ -151,6 +151,7 @@ import {
   ListTrackStrategies, AddTrackStrategy, DelTrackStrategy, GetTrackBatches,
   GetRecentTrackItems, GetTrackStats, CreateTrackBatch, ImportTrackInboxFolder,
   OpenTrackInboxDir, ExportTrackCSV, ExportTrackExcel, DeleteTrackBatch, DeleteTrackItem, RefreshAllTrackNames,
+  FillAllTrackHoldings,
   RenameTrackStrategy,
   RunOvernightScan, RunOvernightAppendCloseSheet, RunOvernightScanJSON,
   RunNiuZhiScanJSON, BackfillTrackRange
@@ -509,13 +510,16 @@ function onSwitchStrategy() {
   refresh()
 }
 
+// [v9f.2] 刷新=先回填涨幅再取数据（此前只重拉列表，回填不触发，用户点刷新"没反应"）
 function refresh() {
   if (!activeStrategy.value) return
   const id = Number(activeStrategy.value)
-  GetTrackBatches(id).then((res) => { batches.value = res || [] })
-  GetRecentTrackItems(id, 200).then((res) => { items.value = res || [] })
-  GetTrackStats().then((res) => {
-    stat.value = (res || []).find(s => String(s.strategyId) === activeStrategy.value) || {}
+  FillAllTrackHoldings().then(() => {
+    GetTrackBatches(id).then((res) => { batches.value = res || [] })
+    GetRecentTrackItems(id, 200).then((res) => { items.value = res || [] })
+    GetTrackStats().then((res) => {
+      stat.value = (res || []).find(s => String(s.strategyId) === activeStrategy.value) || {}
+    })
   })
 }
 

@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/duke-git/lancet/v2/convertor"
@@ -67,6 +68,7 @@ func (a *App) ImportAuctionCSV(files []string) string {
 	}
 	msg := fmt.Sprintf("竞价导入完成: %d 个文件, 共写入 %d 条记录", total, imported)
 	logger.SugaredLogger.Infof("%s", msg)
+	InvalidateAuctionCountCache() // [v9f.3] 导入完成强刷统计缓存
 	go runtime.EventsEmit(a.ctx, "auctionImportDone", msg)
 	return msg
 }
@@ -230,12 +232,18 @@ func (a *App) doSnapshotAuction() {
 		}
 	}
 	logger.SugaredLogger.Infof("竞价快照完成: %s 共 %d 条", td, saved)
+	InvalidateAuctionCountCache() // [v9f.3] 快照完成强刷统计缓存
 	go runtime.EventsEmit(a.ctx, "auctionSnapshotDone", fmt.Sprintf("%s: %d 条", td, saved))
 }
 
 // GetAuctionCount 竞价数据统计（前端展示）
+// [v9f.3] 切页卡顿优化：130万行全表聚合用60秒缓存；导入/快照完成事件强刷
 func (a *App) GetAuctionCount() map[string]interface{} {
 	defer PanicHandler()
+	now := time.Now().Unix()
+	if cached, ok := auctionCountCache.Load(); ok && now-auctionCountCacheAt.Load() < 60 {
+		return cached.(map[string]interface{})
+	}
 	out := map[string]interface{}{}
 	var rows, days int64
 	db.Dao.Model(&models.DailyAuction{}).Count(&rows)
@@ -247,7 +255,20 @@ func (a *App) GetAuctionCount() map[string]interface{} {
 	out["rows"] = rows
 	out["days"] = days
 	out["latest"] = latest
+	auctionCountCache.Store(out)
+	auctionCountCacheAt.Store(now)
 	return out
+}
+
+// auctionCountCache 竞价统计缓存（[v9f.3]）
+var (
+	auctionCountCache   atomic.Value
+	auctionCountCacheAt atomic.Int64
+)
+
+// InvalidateAuctionCountCache 强刷竞价统计缓存（导入/快照完成后调用）
+func InvalidateAuctionCountCache() {
+	auctionCountCacheAt.Store(0)
 }
 
 // EmitAuctionMsg v9e.9 竞价提示弹窗事件（前端message样式醒目）

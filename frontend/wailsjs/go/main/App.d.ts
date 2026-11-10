@@ -895,3 +895,6 @@ export function RunAutoPickNow(): Promise<string>;
 export function FetchSingleStockKLine(arg1:string, arg2:number): Promise<number>;
 
 export function BackfillTrackRange(arg1:string, arg2:string, arg3:string): Promise<string>;
+
+// [v9f.2] 全量回填所有批次涨幅（刷新按钮先回填再取数）
+export function FillAllTrackHoldings(): Promise<void>;

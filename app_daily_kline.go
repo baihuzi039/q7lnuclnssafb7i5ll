@@ -140,6 +140,7 @@ func syncDailyKLineJob(ctx context.Context) {
 	}
 	wg.Wait()
 	klineLastSyncStore(time.Now().Format("2006-01-02 15:04:05"))
+	InvalidateKlineStatusCache() // [v9f.3] 同步完成强刷状态缓存
 	logger.SugaredLogger.Infof("日线同步完成: 成功 %d 只, 失败/停牌 %d 只, 新增 %d 行, 耗时 %s",
 		okCount.Load(), failCount.Load(), rowSum.Load(), time.Since(start).Round(time.Second))
 }
@@ -261,9 +262,43 @@ func (a *App) SyncDailyKLineNow() string {
 }
 
 // GetDailyKLineSyncStatus 查询日线库状态（分类计数：A股股票/ETF/其他，避免把基金债券算进股票数）
+// [v9f.3] 切页卡顿优化：重聚合部分用60秒缓存（Running/LastSyncTime 始终实时）；
+// 同步完成/导入完成事件调 InvalidateKlineStatusCache 强刷
 func (a *App) GetDailyKLineSyncStatus() models.DailyKLineSyncStatus {
 	defer PanicHandler()
-	st := models.DailyKLineSyncStatus{Running: klineSyncRunning.Load()}
+	now := time.Now().Unix()
+	if cached, ok := klineStatusCache.Load(); ok && now-klineStatusCacheAt.Load() < 60 {
+		c := cached.(models.DailyKLineSyncStatus)
+		c.Running = klineSyncRunning.Load()
+		if v := klineLastSyncLoad(); v != "" {
+			c.LastSyncTime = v
+		}
+		return c
+	}
+	st := computeDailyKLineSyncStatus()
+	klineStatusCache.Store(st)
+	klineStatusCacheAt.Store(now)
+	st.Running = klineSyncRunning.Load()
+	if v := klineLastSyncLoad(); v != "" {
+		st.LastSyncTime = v
+	}
+	return st
+}
+
+// klineStatusCache 日线状态缓存（[v9f.3] 60秒过期；事件强刷）
+var (
+	klineStatusCache   atomic.Value
+	klineStatusCacheAt atomic.Int64 // unix秒
+)
+
+// InvalidateKlineStatusCache 强制失效状态缓存（同步完成/导入完成后调用）
+func InvalidateKlineStatusCache() {
+	klineStatusCacheAt.Store(0)
+}
+
+// computeDailyKLineSyncStatus 实际执行聚合查询（原 GetDailyKLineSyncStatus 主体）
+func computeDailyKLineSyncStatus() models.DailyKLineSyncStatus {
+	var st models.DailyKLineSyncStatus
 	if v := klineLastSyncLoad(); v != "" {
 		st.LastSyncTime = v
 	}
