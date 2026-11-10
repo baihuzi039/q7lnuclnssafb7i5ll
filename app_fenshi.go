@@ -186,31 +186,27 @@ func fenshiAnalyzeFromTencent(stockCode string) (*FenshiAnalysisResult, error) {
 	if len(trend) == 0 {
 		return nil, fmt.Errorf("腾讯分钟线解析为空")
 	}
-	// 2) 快照（昨收）
+	// 2) 快照（昨收）—— qt.gtimg.cn 返回 v_sh600519="1~名称~代码~现价~昨收~..." 纯文本，不能用JSON解析（v9f.15修复）
 	snapURL := fmt.Sprintf("https://qt.gtimg.cn/q=%s", tcode)
-	sm, err := fenshiGetOnce(snapURL, fenshiPlainClient)
+	sreq, _ := http.NewRequest("GET", snapURL, nil)
+	sreq.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
+	sresp, err := fenshiPlainClient.Do(sreq)
 	if err != nil {
 		return nil, fmt.Errorf("腾讯快照请求失败: %v", err)
 	}
+	sbody, _ := io.ReadAll(sresp.Body)
+	sresp.Body.Close()
 	preClose, name := 0.0, ""
-	for _, v := range sm {
-		line, _ := v.(string)
-		if line == "" || !strings.Contains(line, "~") {
-			continue
-		}
-		body := line
-		if i := strings.Index(line, "\""); i >= 0 {
-			body = line[i+1:]
-			if j := strings.LastIndex(body, "\""); j >= 0 {
-				body = body[:j]
-			}
+	if i := strings.Index(string(sbody), "\""); i >= 0 {
+		body := string(sbody)[i+1:]
+		if j := strings.LastIndex(body, "\""); j >= 0 {
+			body = body[:j]
 		}
 		parts := strings.Split(body, "~")
 		if len(parts) > 4 {
 			name = parts[1]
 			preClose, _ = strconv.ParseFloat(parts[4], 64)
 		}
-		break
 	}
 	if preClose <= 0 {
 		return nil, fmt.Errorf("腾讯快照昨收异常")
@@ -838,20 +834,17 @@ func fenshiAnalyzeFromSina(stockCode string) (*FenshiAnalysisResult, error) {
 	}
 	defer sresp.Body.Close()
 	sbodyRaw, _ := io.ReadAll(sresp.Body)
-	// GBK→UTF-8（名称是中文；其余数字ASCII不受影响）
+	// v9f.15修复：新浪 hq 格式为 var hq_str_sh600519="名称,今开,昨收,现价,..."（逗号分隔，非~分隔）
 	name := ""
 	preClose, nowPx := 0.0, 0.0
-	if sl := string(sbodyRaw); strings.Contains(sl, "~") {
-		// 简易GBK兼容：数字字段ASCII可直接解析；中文名单独取（失败则用代码）
+	if sl := string(sbodyRaw); strings.Contains(sl, "=") {
 		i3 := strings.Index(sl, "\"")
 		j3 := strings.LastIndex(sl, "\"")
 		if i3 >= 0 && j3 > i3 {
 			fields := strings.Split(sl[i3+1:j3], ",")
-			if len(fields) > 32 {
-				nowPx, _ = strconv.ParseFloat(fields[3], 64)
-				preClose, _ = strconv.ParseFloat(fields[2], 64)
-				// 昨收其实是 fields[2]；今开 fields[1]
-				name = "GBK" // GBK中文名无法直接解析，仅标识
+			if len(fields) > 3 {
+				nowPx, _ = strconv.ParseFloat(strings.TrimSpace(fields[3]), 64)
+				preClose, _ = strconv.ParseFloat(strings.TrimSpace(fields[2]), 64)
 			}
 		}
 	}
