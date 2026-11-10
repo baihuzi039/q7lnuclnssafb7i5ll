@@ -29,6 +29,7 @@ import (
 
 	utls "github.com/refraction-networking/utls"
 
+	stockdata "go-stock/backend/data"
 	"go-stock/backend/logger"
 )
 
@@ -202,6 +203,8 @@ func fenshiAnalyzeFromTencent(stockCode string) (*FenshiAnalysisResult, error) {
 		if j := strings.LastIndex(body, "\""); j >= 0 {
 			body = body[:j]
 		}
+		// v9f.17：qt.gtimg.cn 返回 GBK 编码，必须解码为 UTF-8，否则中文名乱码
+		body = stockdata.GB18030ToUTF8([]byte(body))
 		parts := strings.Split(body, "~")
 		if len(parts) > 4 {
 			name = parts[1]
@@ -275,6 +278,32 @@ func fenshiTencentCode(code string) (string, bool) {
 
 // fenshiDirectClient 与原作者 SharedHTTPClient 同款：直连 + Go 默认 crypto/tls，不走代理不装指纹。
 // 实测证明候选池扫描（同款路径）在此网络环境正常，故设为第一优先。
+// FenshiWatchlist 自选股列表（复用原版 followed_stock 表，与股票自选页共享数据）
+func (a *App) FenshiWatchlist() []map[string]any {
+	list := stockdata.NewStockDataApi().GetFollowList(0)
+	out := make([]map[string]any, 0)
+	if list == nil {
+		return out
+	}
+	for _, s := range *list {
+		out = append(out, map[string]any{
+			"code": s.StockCode,
+			"name": s.Name,
+		})
+	}
+	return out
+}
+
+// FenshiWatchlistAdd 添加自选（复用原版 Follow，含主站名称/现价拉取）
+func (a *App) FenshiWatchlistAdd(stockCode string) string {
+	return stockdata.NewStockDataApi().Follow(stockCode)
+}
+
+// FenshiWatchlistRemove 删除自选
+func (a *App) FenshiWatchlistRemove(stockCode string) string {
+	return stockdata.NewStockDataApi().UnFollow(stockCode)
+}
+
 // fenshiUrls 返回域名备援列表：主域 + 92备用节点（东财同一接口多域名部署）
 func fenshiUrls(rawURL string) []string {
 	urls := []string{rawURL}
