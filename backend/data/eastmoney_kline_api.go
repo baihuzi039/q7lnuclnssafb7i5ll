@@ -391,6 +391,12 @@ func (receiver *EastMoneyKLineApi) GetAdjustedKLine(stockCode, adjustType string
 	return receiver.GetKLineData(stockCode, "101", adjustType, days)
 }
 
+// ConvertStockCodeToEMSecid [v9f] 导出包装：股票代码→东财 secid（供 main 包策略跟踪名称刷新用）
+func ConvertStockCodeToEMSecid(stockCode string) string {
+	api := &EastMoneyKLineApi{client: SharedHTTPClient}
+	return api.convertStockCode(stockCode)
+}
+
 // convertStockCode 转换股票代码为东方财富格式
 // 输入：000001 或 sz000001 或 000001.SZ
 // 输出：0.000001 或 1.600000

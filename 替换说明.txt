@@ -1,21 +1,13 @@
-替换说明（v9f 收盘后自动任务-自动追加回测版）
+替换说明（v9f.1 CI修复补丁 = v9f + CI#61修复）
 ================================================
-本次真正变化的文件（11个）：
-1. app.go                 自动任务cron改为读设置时间(默认17:40)，补跑窗口扩到20:00
-2. app_auto_pick.go       收盘后流程：先全量同步日线→选股→建批次→自动追加回测表→通知；
-                          设置保存/读取支持 时间+追加开关
-3. app_track.go           批次列表附带itemCount明细数
-4. app_track_export.go    [新]自动追加回测表(一夜+牛指两模板,幂等防重复)；
-                          [新]东财实时名称刷新+存量错名修正RefreshAllTrackNames；
-                          导出支持牛指模板；空批次明确提示
-5. app_track_stats.go     回填时顺带刷新股票名称(名称走数据链)
-6. app_daily_kline.go     同步补写列扩为open/close/pct_change/turnover(治历史open=0坏行)
-7. backend/data/settings_api.go   Settings新列: auto_pick_time/auto_append_xlsx(自动迁移)
-8. frontend/src/components/TrackCenter.vue   "修正名称"按钮；导出Excel跳过空批次
-9. frontend/src/components/settings.vue      收盘后自动任务卡片: 运行时间选择+追加回测表开关
-10. frontend/wailsjs/go/main/App.js          绑定+SetAutoPickSettingsFull
-11. frontend/wailsjs/go/main/App.d.ts        绑定+SetAutoPickSettingsFull
+CI#61 报错: app_track_export.go:565:10 undefined: EastMoneyKLineApi
+根因: EastMoneyKLineApi 是 backend/data 包类型，main 包裸引用未带包名；
+     convertStockCode 方法未导出，main 包无法调用。
+修复: data 包新增导出包装 ConvertStockCodeToEMSecid；main 包改经 data. 调用。
 
-与上包相同文件：无（本包全部为本次变化文件）
-模板文件：不包含，仍用你已放好的 D:\go-stock\data\templates\ 一夜持股.xlsx / 牛指T+1.xlsx
-VIP解锁4处补丁：本包文件不涉及，均保留在位
+本次真正变化的文件（2个）：
+1. app_track_export.go               名称刷新改走 data.ConvertStockCodeToEMSecid
+2. backend/data/eastmoney_kline_api.go   新增导出函数 ConvertStockCodeToEMSecid
+
+与上包(v9f)相同文件：其余 9 个文件与 v9f 包完全一致，无需重复覆盖
+（若嫌麻烦也可直接用本包2文件覆盖，前提是 v9f 其余文件已提交）

@@ -560,10 +560,11 @@ func (a *App) BackfillTrackRange(strategyName, startDate, endDate string) string
 // ==================================================================
 
 // eastMoneyRealtimeName 东财 push2 单票接口取当前名称（f58=名称），失败返回空
-// [v9f] 复用共享 resty client 与 KLineApi 的 secid 转换
+// [v9f] 复用共享 resty client；secid 转换在 data 包内部做（避免跨包引未导出字段）
+// CI#61修复: EastMoneyKLineApi 是 data 包类型，main 包直接引用需带包名；
+// convertStockCode 未导出，改由 data 包新增导出函数 ConvertStockCodeToEMSecid 承接
 func eastMoneyRealtimeName(stockCode string) string {
-	api := &EastMoneyKLineApi{}
-	secid := api.convertStockCode(stockCode)
+	secid := data.ConvertStockCodeToEMSecid(stockCode)
 	if secid == "" {
 		return ""
 	}
