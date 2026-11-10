@@ -56,32 +56,32 @@ type FenshiCand struct {
 
 // FenshiSignal 单条信号/建议
 type FenshiSignal struct {
-	Name    string  `json:"name"`
-	Type    string  `json:"type"`    // buy / warn / info
-	Prob    string  `json:"prob"`    // 概率/依据描述
-	Desc    string  `json:"desc"`
+	Name string `json:"name"`
+	Type string `json:"type"` // buy / warn / info
+	Prob string `json:"prob"` // 概率/依据描述
+	Desc string `json:"desc"`
 }
 
 // FenshiAnalysisResult 个股分时分析结果
 type FenshiAnalysisResult struct {
-	Code        string          `json:"code"`
-	Name        string          `json:"name"`
-	Price       float64         `json:"price"`
-	PrevClose   float64         `json:"prevClose"`
-	GapPct      float64         `json:"gapPct"`      // 高开%
-	ChangePct   float64         `json:"changePct"`
-	AvgPrice    float64         `json:"avgPrice"`    // 均价线
-	AboveVwapP  float64         `json:"aboveVwapP"`  // 现价偏离均价线%
-	Mom15       float64         `json:"mom15"`       // 15分钟动量%
-	VolumeRate  float64         `json:"volumeRate"`
-	PullbackPct float64         `json:"pullbackPct"` // 距开盘后最高点回落%
-	High        float64         `json:"high"`
-	Low         float64         `json:"low"`
-	Trend       []FenshiTick    `json:"trend"` // 分时数据点
+	Code        string       `json:"code"`
+	Name        string       `json:"name"`
+	Price       float64      `json:"price"`
+	PrevClose   float64      `json:"prevClose"`
+	GapPct      float64      `json:"gapPct"` // 高开%
+	ChangePct   float64      `json:"changePct"`
+	AvgPrice    float64      `json:"avgPrice"`   // 均价线
+	AboveVwapP  float64      `json:"aboveVwapP"` // 现价偏离均价线%
+	Mom15       float64      `json:"mom15"`      // 15分钟动量%
+	VolumeRate  float64      `json:"volumeRate"`
+	PullbackPct float64      `json:"pullbackPct"` // 距开盘后最高点回落%
+	High        float64      `json:"high"`
+	Low         float64      `json:"low"`
+	Trend       []FenshiTick `json:"trend"` // 分时数据点
 
-	Signals     []FenshiSignal  `json:"signals"`
-	Advice      string          `json:"advice"`
-	ErrMsg      string          `json:"errMsg"` // 非空表示分析失败及原因
+	Signals []FenshiSignal `json:"signals"`
+	Advice  string         `json:"advice"`
+	ErrMsg  string         `json:"errMsg"` // 非空表示分析失败及原因
 }
 
 // fenshiDialTLS 用 utls 模拟 Chrome TLS 指纹，防东财风控识别 Go 默认 crypto/tls 导致 EOF 断连
@@ -278,10 +278,10 @@ func fenshiTencentCode(code string) (string, bool) {
 var fenshiHTTPClient = &http.Client{
 	Timeout: 3 * time.Second,
 	Transport: &http.Transport{
-		Proxy:                http.ProxyURL(fenshiSysProxyOrDirect()),
-		DialTLSContext:       fenshiDialTLS,
+		Proxy:               http.ProxyURL(fenshiSysProxyOrDirect()),
+		DialTLSContext:      fenshiDialTLS,
 		TLSHandshakeTimeout: 3 * time.Second,
-		ForceAttemptHTTP2:    false,
+		ForceAttemptHTTP2:   false,
 		MaxIdleConns:        10,
 		IdleConnTimeout:     60 * time.Second,
 	},
@@ -301,7 +301,6 @@ var fenshiPlainClient = &http.Client{
 		Proxy: http.ProxyURL(fenshiSysProxyOrDirect()),
 	},
 }
-
 
 func fenshiGet(rawURL string) (map[string]any, error) {
 	var lastErr error
@@ -395,8 +394,8 @@ func fenshiSecid(code string) string {
 // FenshiScanCandidates 全市场扫描候选池: 高开1-7% + 量比>=3, 剔除ST/退市
 func (a *App) FenshiScanCandidates() []FenshiCand {
 	markets := []string{
-		"m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23",         // 沪深主板+创业板
-		"m:0+t:81+s:2048",                            // 科创板
+		"m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23", // 沪深主板+创业板
+		"m:0+t:81+s:2048",                   // 科创板
 	}
 	var out []FenshiCand
 	seen := map[string]bool{}
@@ -494,7 +493,11 @@ func fenshiAnalyzeCore(stockCode string) *FenshiAnalysisResult {
 		if serr == nil {
 			return res2
 		}
-		return retErr("三源均失败。东财: " + err.Error() + "；腾讯: " + terr.Error() + "；新浪: " + serr.Error())
+		proxyInfo := "无(裸连)"
+		if pu := fenshiSysProxy(); pu != nil {
+			proxyInfo = pu.Host
+		}
+		return retErr("三源均失败。[系统代理=" + proxyInfo + " 版本=" + Version + "] 东财: " + err.Error() + "；腾讯: " + terr.Error() + "；新浪: " + serr.Error())
 	}
 	d, _ := m["data"].(map[string]any)
 	if d == nil {

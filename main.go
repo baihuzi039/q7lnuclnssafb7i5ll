@@ -201,7 +201,7 @@ func main() {
 
 	// Create application with options
 	err = wails.Run(&options.App{
-		Title: "go-stock：AI赋能股票分析✨ " + OFFICIAL_STATEMENT,
+		Title: "go-stock：AI赋能股票分析✨ " + versionTag() + " " + OFFICIAL_STATEMENT,
 		// 默认窗口大小：自适应但保留明显边距
 		Width:  appWidth,
 		Height: appHeight,
@@ -577,4 +577,12 @@ func PanicHandler() {
 		fmt.Printf("Recovered from panic: %v\n", r)
 		debug.PrintStack()
 	}
+}
+
+// versionTag 窗口标题显示版本号+模块名（Version 由 CI ldflags 注入，如 9f.10-fenshi-release）
+func versionTag() string {
+	if Version == "" {
+		return ""
+	}
+	return " [v" + Version + "]"
 }

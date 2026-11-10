@@ -31,8 +31,6 @@ func fenshiWindowsProxyAddr() string {
 var fenshiSysProxyOnce sync.Once
 var fenshiSysProxyURL string
 
-
-
 // fenshiSysProxy 返回系统代理URL（非windows恒nil）
 func fenshiSysProxy() *url.URL {
 	fenshiSysProxyOnce.Do(func() {
