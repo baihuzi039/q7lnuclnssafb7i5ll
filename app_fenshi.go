@@ -20,9 +20,11 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os/exec"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	utls "github.com/refraction-networking/utls"
@@ -327,6 +329,32 @@ var fenshiPlainClient = &http.Client{
 	},
 }
 
+// fenshiPSFetch 用 Windows 自带 PowerShell(schannel TLS 栈) 拉取 JSON。
+// 适用场景：链路对 Go crypto/tls 指纹及明文 http 做 TLS 识别阻断(EOF/502/劫持HTML)时，
+// schannel 指纹与 Chrome 同源，浏览器能通它就能通。仅作最末级兑底。
+func fenshiPSFetch(rawURL string) (map[string]any, error) {
+	if _, err := exec.LookPath("powershell"); err != nil {
+		return nil, fmt.Errorf("powershell不可用")
+	}
+	script := fmt.Sprintf(
+		`$r=Invoke-WebRequest -Uri '%s' -UseBasicParsing -TimeoutSec 8 -Headers @{'User-Agent'='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'}; $r.Content`,
+		strings.ReplaceAll(rawURL, "'", "''"))
+	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "powershell", "-NoProfile", "-NonInteractive", "-Command", script).Output()
+	if err != nil {
+		return nil, err
+	}
+	body := strings.TrimSpace(string(out))
+	// PowerShell 可能输出 BOM/裹挙的转义，去头找 JSON 起点
+	if i := strings.Index(body, "{"); i > 0 {
+		body = body[i:]
+	}
+	var m map[string]any
+	err = json.Unmarshal([]byte(body), &m)
+	return m, err
+}
+
 func fenshiGet(rawURL string) (map[string]any, error) {
 	var lastErr error
 	// 第0优先：直连 + Go 默认 TLS（与候选池扫描/原作者同款路径，实测最稳）
@@ -355,6 +383,13 @@ func fenshiGet(rawURL string) (map[string]any, error) {
 		}
 		lastErr = err
 		logger.SugaredLogger.Warnf("fenshiGet 第%d次失败: %v", i+1, err)
+	}
+	// 最末级兑底：PowerShell schannel 通道（链路对 Go 流量全面阻断时的唯一生路）
+	if m, err := fenshiPSFetch(rawURL); err == nil {
+		logger.SugaredLogger.Info("fenshiGet PowerShell 兑底成功")
+		return m, nil
+	} else {
+		logger.SugaredLogger.Warnf("fenshiGet PowerShell 兑底失败: %v", err)
 	}
 	return nil, lastErr
 }
@@ -487,15 +522,38 @@ func (a *App) FenshiScanCandidates() []FenshiCand {
 
 // FenshiAnalyzeStock 个股实时分时分析（核心入口）
 // FenshiAnalyzeStock 入口：VPN分流不稳定导致"时好时坏"，外层重试2轮大幅提高成功率
+var (
+	fenshiJobMu      sync.Mutex
+	fenshiJobRunning = map[string]bool{}
+)
+
+// fenshiPSFetchMemoPS 去重保护，防止同一代码并发重复分析拖死前端
+var fenshiJobInflight = map[string]*FenshiAnalysisResult{}
+
 func (a *App) FenshiAnalyzeStock(stockCode string) *FenshiAnalysisResult {
+	fenshiJobMu.Lock()
+	if res, ok := fenshiJobInflight[stockCode]; ok {
+		fenshiJobMu.Unlock()
+		return res
+	}
+	fenshiJobMu.Unlock()
+
+	fenshiJobMu.Lock()
+	fenshiJobInflight[stockCode] = nil // 占位
+	fenshiJobMu.Unlock()
+
 	var r *FenshiAnalysisResult
 	for round := 1; round <= 2; round++ {
 		r = fenshiAnalyzeCore(stockCode)
 		if r != nil && r.ErrMsg == "" {
-			return r
+			break
 		}
 		logger.SugaredLogger.Warnf("FenshiAnalyzeStock 第%d轮失败，重试", round)
 	}
+
+	fenshiJobMu.Lock()
+	fenshiJobInflight[stockCode] = r
+	fenshiJobMu.Unlock()
 	return r
 }
 
