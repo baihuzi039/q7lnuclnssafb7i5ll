@@ -97,14 +97,22 @@ const syncPercent = computed(() => {
   return Math.min(100, Math.round((status.value.syncedStocks || 0) / status.value.totalStocks * 100))
 })
 
+// [v9e.9.4] 最新日期排最前（默认降序）；涨跌幅红涨绿跌
 const klineColumns = [
-  {title: '日期', key: 'day', width: 110},
+  {title: '日期', key: 'day', width: 110, sorter: 'default', defaultSortOrder: 'descend'},
   {title: '开盘', key: 'open', width: 80},
   {title: '收盘', key: 'close', width: 80},
   {title: '最高', key: 'high', width: 80},
   {title: '最低', key: 'low', width: 80},
   // [v9e.4] 口径修复: pct_change库内为百分数(1.12=+1.12%), turnover库内为小数(0.0033=0.33%)需×100
-  {title: '涨跌幅%', key: 'pctChange', width: 90, render(row) { return (row.pctChange ?? 0) !== 0 ? (row.pctChange.toFixed(2)) : '0.00' }},
+  {title: '涨跌幅%', key: 'pctChange', width: 90, sorter: 'default',
+   render(row) {
+     const v = row.pctChange ?? 0
+     const txt = (v).toFixed(2)
+     if (v > 0) return h('span', {style: 'color: #e88080; font-weight: bold'}, txt)   // 红涨
+     if (v < 0) return h('span', {style: 'color: #63e2b7; font-weight: bold'}, txt)   // 绿跌
+     return txt
+   }},
   {title: '换手率%', key: 'turnover', width: 90, render(row) { return (row.turnover ?? 0) > 0 ? ((row.turnover*100).toFixed(2)) : '-' }},
 ]
 
