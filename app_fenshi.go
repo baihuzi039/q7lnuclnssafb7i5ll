@@ -245,6 +245,7 @@ func fenshiTencentCode(code string) (string, bool) {
 var fenshiHTTPClient = &http.Client{
 	Timeout: 3 * time.Second,
 	Transport: &http.Transport{
+		Proxy:                http.ProxyURL(fenshiSysProxyOrDirect()),
 		DialTLSContext:       fenshiDialTLS,
 		TLSHandshakeTimeout: 3 * time.Second,
 		ForceAttemptHTTP2:    false,
@@ -261,7 +262,13 @@ var fenshiUAList = []string{
 
 // fenshiGet 拉取并解析JSON（多重备援：http明文优先→https+utls→备用域名，防东财风控断连EOF）
 // 东财接口支持 http 明文访问，且风控只针对 TLS 握手层；明文请求不被拦截，优先使用。
-var fenshiPlainClient = &http.Client{Timeout: 3 * time.Second}
+var fenshiPlainClient = &http.Client{
+	Timeout: 3 * time.Second,
+	Transport: &http.Transport{
+		Proxy: http.ProxyURL(fenshiSysProxyOrDirect()),
+	},
+}
+
 
 func fenshiGet(rawURL string) (map[string]any, error) {
 	var lastErr error
