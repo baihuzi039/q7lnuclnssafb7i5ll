@@ -151,6 +151,9 @@ func (a *App) autoPickJob(manual bool) string {
 	msg := sb.String()
 	logger.SugaredLogger.Infof("自动选股完成:\n%s", msg)
 
+	// v9e.9.6：自动写入策略跟踪批次（一夜/牛指各一签；当日已有批次则追加去重）
+	autoPickSaveTrack(today, orn, nzn)
+
 	// 桌面通知
 	(&App{}).SendDesktopNotification("go-stock 自动选股", strings.ReplaceAll(msg, "\n", " "))
 
@@ -163,4 +166,54 @@ func (a *App) autoPickJob(manual bool) string {
 	// 前端事件（TrackCenter/任意页弹窗展示）
 	EmitAutoPickDone(a, today, msg)
 	return msg
+}
+
+// autoPickSaveTrack v9e.9.6 把自动选股结果写入策略跟踪批次（复用 CreateTrackBatch 的解析与去重逻辑）
+// 一夜 → 策略"一夜持股"；牛指 → 策略"牛指T+1"。批次Source=auto。
+func autoPickSaveTrack(day string, orn OvernightScanResult, nzn NiuZhiScanResult) {
+	defer PanicHandler()
+	writeOne := func(strategyName, score string, cands []struct {
+		Code  string
+		Name  string
+		Extra string
+	}) {
+		if len(cands) == 0 {
+			return
+		}
+		var st models.TrackStrategy
+		if err := db.Dao.Where("name = ?", strategyName).First(&st).Error; err != nil {
+			logger.SugaredLogger.Errorf("自动记录失败: 找不到策略 %s", strategyName)
+			return
+		}
+		lines := ""
+		for _, c := range cands {
+			lines += c.Code + " " + c.Name + " " + c.Extra + "\n"
+		}
+		a := &App{}
+		msg := a.CreateTrackBatch(st.ID, day, lines)
+		logger.SugaredLogger.Infof("自动写入策略跟踪[%s]: %s", strategyName, msg)
+	}
+	type candLine struct {
+		Code  string
+		Name  string
+		Extra string
+	}
+	// 一夜：Top1+候补（最多5只）
+	var on []candLine
+	for i, c := range orn.Cands {
+		if i >= 5 {
+			break
+		}
+		on = append(on, candLine{Code: c.Code, Name: c.Name, Extra: fmt.Sprintf("仓%.0f%%", c.Weight*100)})
+	}
+	writeOne("一夜持股", "", on)
+	// 牛指：Top1+候补（最多5只）
+	var nz []candLine
+	for i, c := range nzn.Cands {
+		if i >= 5 {
+			break
+		}
+		nz = append(nz, candLine{Code: c.Code, Name: c.Name, Extra: fmt.Sprintf("评分%d", c.Score)})
+	}
+	writeOne("牛指T+1", "", nz)
 }

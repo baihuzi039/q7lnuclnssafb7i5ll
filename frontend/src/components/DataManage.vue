@@ -113,7 +113,8 @@ const klineColumns = [
      if (v < 0) return h('span', {style: 'color: #63e2b7; font-weight: bold'}, txt)   // 绿跌
      return txt
    }},
-  {title: '换手率%', key: 'turnover', width: 90, render(row) { return (row.turnover ?? 0) > 0 ? ((row.turnover*100).toFixed(2)) : '-' }},
+  // [v9e.9.5] 东财f61换手率已是百分数(21.03=21.03%)，直接显示；不再×100（此前×100导致965/2103异常值）
+  {title: '换手率%', key: 'turnover', width: 90, sorter: 'default', render(row) { const t=row.turnover ?? 0; return t>0 ? t.toFixed(2) : '-' }},
 ]
 
 function loadStatus() {
