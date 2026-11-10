@@ -380,6 +380,12 @@ func (a *App) FenshiWatchlistRemove(stockCode string) string {
 	return stockdata.NewStockDataApi().UnFollow(stockCode)
 }
 
+// FenshiNowTime 时钟校准源（v9f.20）：返回本机系统时间毫秒戳，
+// 前端用它计算与本地 Date.now() 的偏移量，保证大时钟不受本地时钟误差影响
+func (a *App) FenshiNowTime() int64 {
+	return time.Now().UnixMilli()
+}
+
 // fenshiUrls 返回域名备援列表：主域 + 92备用节点（东财同一接口多域名部署）
 func fenshiUrls(rawURL string) []string {
 	urls := []string{rawURL}

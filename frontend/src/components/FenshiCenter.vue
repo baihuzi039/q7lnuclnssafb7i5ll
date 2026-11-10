@@ -16,44 +16,77 @@
       <!-- 右侧：大分时图 -->
       <div class="right-pane">
         <n-card size="small" v-if="result" class="mb12 chart-card">
-          <!-- 大标题：代码+名称（用户指定显眼格式） -->
+          <!-- 大标题：居中，名称+代码（代码去前缀） -->
           <template #header>
             <div class="chart-title">
               <span class="title-name">{{ result.name }}</span>
-              <span class="title-code">（{{ result.code }}）</span>
+              <span class="title-code">（{{ stripPrefix(result.code) }}）</span>
             </div>
           </template>
-          <div class="quote-line">
-            <span class="price" :class="result.changePct >= 0 ? 'up' : 'down'">{{ result.price.toFixed(2) }}</span>
-            <span :class="result.changePct >= 0 ? 'up' : 'down'"> {{ result.changePct.toFixed(2) }}%</span>
-            <span class="dim">高开 {{ result.gapPct.toFixed(2) }}% · 量比 {{ result.volumeRate.toFixed(2) }} · 均价 {{ result.avgPrice.toFixed(2) }}（{{ result.aboveVwapP >= 0 ? '+' : '' }}{{ result.aboveVwapP.toFixed(2) }}%）· 15分钟动量 {{ result.mom15.toFixed(2) }}%</span>
+
+          <!-- 顶部行情行 + 大时钟 -->
+          <div class="top-row">
+            <div class="quote-line">
+              <span class="price" :class="result.changePct >= 0 ? 'up' : 'down'">{{ result.price.toFixed(2) }}</span>
+              <span :class="result.changePct >= 0 ? 'up' : 'down'"> {{ result.changePct.toFixed(2) }}%</span>
+              <span class="dim">高开 {{ result.gapPct.toFixed(2) }}% · 量比 {{ result.volumeRate.toFixed(2) }} · 均价 {{ result.avgPrice.toFixed(2) }}（{{ result.aboveVwapP >= 0 ? '+' : '' }}{{ result.aboveVwapP.toFixed(2) }}%）· 15分钟动量 {{ result.mom15.toFixed(2) }}%</span>
+            </div>
+            <!-- 大时钟（校准到本机系统时间，精确到秒） -->
+            <div class="big-clock">
+              <span class="clock-time">{{ clockStr }}</span>
+              <span class="clock-date">{{ clockDate }}</span>
+            </div>
           </div>
-          <div class="chart-wrap">
+
+          <div
+            class="chart-wrap"
+            @mousemove="onChartMove"
+            @mouseleave="onChartLeave"
+            @click="onChartClick"
+            @dblclick="onChartDblClick"
+          >
             <svg class="trend-svg" viewBox="0 0 860 400" preserveAspectRatio="none">
-              <!-- 横向网格线 + 纵轴价格/涨跌幅刻度 -->
+              <!-- 横向网格 + 纵轴刻度（黑体） -->
               <g v-for="(g, gi) in gridLines" :key="'g' + gi">
-                <line :x1="52" :x2="856" :y1="g.y" :y2="g.y" class="grid-line" />
-                <text :x="46" :y="g.y + 4" class="axis-text" text-anchor="end">{{ g.priceLabel }}</text>
-                <text :x="46" :y="g.y + 16" class="axis-text" :class="g.pctClass" text-anchor="end">{{ g.pctLabel }}</text>
+                <line :x1="CH.x0" :x2="CH.x1" :y1="g.y" :y2="g.y" class="grid-line" />
+                <text :x="CH.x0 - 8" :y="g.y + 4" class="axis-text hei" text-anchor="end">{{ g.priceLabel }}</text>
+                <text :x="CH.x0 - 8" :y="g.y + 18" class="axis-text hei" :class="g.pctClass" text-anchor="end">{{ g.pctLabel }}</text>
               </g>
-              <!-- 纵轴边界线 -->
-              <line :x1="52" :x2="52" :y1="8" :y2="352" class="axis-line" />
-              <line :x1="856" :x2="856" :y1="8" :y2="352" class="axis-line" />
-              <!-- 横轴刻度线 + 时间标签 -->
+              <!-- 轴边界 -->
+              <line :x1="CH.x0" :x2="CH.x0" :y1="CH.y0" :y2="CH.y1" class="axis-line" />
+              <line :x1="CH.x1" :x2="CH.x1" :y1="CH.y0" :y2="CH.y1" class="axis-line" />
+              <line :x1="CH.x0" :x2="CH.x1" :y1="CH.y1" :y2="CH.y1" class="axis-line" />
+              <!-- 横轴：每半小时刻度（黑体） -->
               <g v-for="(t, ti) in xTicks" :key="'t' + ti">
-                <line :x1="t.x" :x2="t.x" :y1="8" :y2="352" class="grid-line" />
-                <text :x="t.x" :y="368" class="axis-text" text-anchor="middle">{{ t.label }}</text>
+                <line :x1="t.x" :x2="t.x" :y1="CH.y0" :y2="CH.y1" class="grid-line" />
+                <text :x="t.x" :y="CH.y1 + 18" class="axis-text hei" text-anchor="middle">{{ t.label }}</text>
               </g>
               <!-- 昨收基准虚线 -->
-              <line v-if="prevCloseY >= 8 && prevCloseY <= 352" :x1="52" :x2="856" :y1="prevCloseY" :y2="prevCloseY" class="preclose-line" />
+              <line v-if="prevCloseY >= CH.y0 && prevCloseY <= CH.y1" :x1="CH.x0" :x2="CH.x1" :y1="prevCloseY" :y2="prevCloseY" class="preclose-line" />
               <!-- 均价线 + 价格线 -->
               <polyline :points="vwapPath" fill="none" stroke="#e6b800" stroke-width="1.3" />
               <polyline :points="pricePath" fill="none" stroke="#4aa3ff" stroke-width="1.6" />
+              <!-- 最新价小红点 -->
+              <circle v-if="lastDot" :cx="lastDot.x" :cy="lastDot.y" r="3.5" fill="#ff4d4f" class="last-dot" />
+              <!-- 十字线（悬停或固定时显示） -->
+              <g v-if="cross">
+                <line :x1="cross.x" :x2="cross.x" :y1="CH.y0" :y2="CH.y1" class="cross-line" />
+                <line :x1="CH.x0" :x2="CH.x1" :y1="cross.y" :y2="cross.y" class="cross-line" />
+                <circle :cx="cross.x" :cy="cross.y" r="3" fill="#fff" />
+                <!-- 数据提示框 -->
+                <g v-if="crossInfo">
+                  <rect :x="tipX" :y="CH.y0 + 4" width="150" height="72" rx="4" class="tip-rect" />
+                  <text :x="tipX + 10" :y="CH.y0 + 24" class="tip-text strong">{{ crossInfo.time }}</text>
+                  <text :x="tipX + 10" :y="CH.y0 + 42" class="tip-text">{{ crossInfo.price }}</text>
+                  <text :x="tipX + 10" :y="CH.y0 + 58" class="tip-text">{{ crossInfo.avg }}</text>
+                  <text :x="tipX + 10" :y="CH.y0 + 72" class="tip-text" :fill="crossInfo.pctColor">{{ crossInfo.pct }}</text>
+                </g>
+              </g>
               <!-- 图例 -->
-              <text x="60" y="20" class="legend-text" fill="#4aa3ff">— 价格</text>
-              <text x="120" y="20" class="legend-text" fill="#e6b800">— 均价</text>
-              <!-- 横轴底部边界 -->
-              <line :x1="52" :x2="856" :y1="352" :y2="352" class="axis-line" />
+              <text :x="CH.x0 + 8" y="20" class="legend-text hei" fill="#4aa3ff">— 价格</text>
+              <text :x="CH.x0 + 68" y="20" class="legend-text hei" fill="#e6b800">— 均价</text>
+              <!-- 模式提示（固定时显示） -->
+              <text v-if="pinned" :x="CH.x1 - 8" y="20" class="legend-text hei" fill="#ff9800" text-anchor="end">已固定 · 双击解除</text>
             </svg>
           </div>
           <div class="advice-box">{{ result.advice }}</div>
@@ -73,9 +106,9 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, h } from "vue";
+import { ref, computed, onMounted, onUnmounted, h } from "vue";
 import { NCard, NButton, NDataTable, NTag, NInput, NSpace, NEmpty, NAlert } from "naive-ui";
-import { FenshiWatchlist, FenshiWatchlistAdd, FenshiWatchlistRemove, FenshiAnalyzeStock } from "../../wailsjs/go/main/App";
+import { FenshiWatchlist, FenshiWatchlistAdd, FenshiWatchlistRemove, FenshiAnalyzeStock, FenshiNowTime } from "../../wailsjs/go/main/App";
 
 const watchlist = ref([]);
 const result = ref(null);
@@ -85,47 +118,30 @@ const analyzing = ref(false);
 const analyzeError = ref("");
 
 const watchColumns = [
-  // v9f.19：代码列去 sh/sz/bj 前缀显示（存储不动，仅展示层处理）
-  {
-    title: "代码", key: "code", width: 76,
-    render(row) {
-      return h("span", null, stripPrefix(row.code));
-    },
-  },
+  { title: "代码", key: "code", width: 76, render(row) { return h("span", null, stripPrefix(row.code)); } },
   { title: "名称", key: "name", width: 92 },
   {
     title: "",
     key: "del",
     width: 36,
     render(row) {
-      return h(
-        NButton,
-        { size: "tiny", quaternary: true, type: "error", onClick: (e) => { e.stopPropagation(); removeStock(row.code); } },
-        { default: () => "删" }
-      );
+      return h(NButton, { size: "tiny", quaternary: true, type: "error", onClick: (e) => { e.stopPropagation(); removeStock(row.code); } }, { default: () => "删" });
     },
   },
 ];
 
-// v9f.19：剥 sh/sz/bj 前缀（展示用）
+// 剥 sh/sz/bj 前缀（展示用；列表与标题统一走这里）
 function stripPrefix(code) {
   if (!code) return "";
   return String(code).replace(/^(sh|sz|bj)/i, "");
 }
 
 function rowProps(row) {
-  return {
-    style: "cursor:pointer",
-    onClick: () => analyze(row.code),
-  };
+  return { style: "cursor:pointer", onClick: () => analyze(row.code) };
 }
 
 async function loadWatchlist() {
-  try {
-    watchlist.value = await FenshiWatchlist();
-  } catch (e) {
-    watchlist.value = [];
-  }
+  try { watchlist.value = await FenshiWatchlist(); } catch (e) { watchlist.value = []; }
 }
 
 const addMsg = ref("");
@@ -138,8 +154,6 @@ async function addStock() {
   addMsg.value = "";
   try {
     const msg = await FenshiWatchlistAdd(code);
-    // v9f.18.1：无论成败都展示后端返回原因，不再静默；
-    // "已经关注了"也算成功（照常分析），只有失败/错误/VIP限制才算失败
     addMsg.value = msg || "（后端无返回）";
     const failed = !msg || msg.indexOf("失败") >= 0 || msg.indexOf("错误") >= 0 || msg.indexOf("VIP") >= 0;
     addMsgOk.value = !failed;
@@ -161,11 +175,18 @@ async function removeStock(code) {
   await loadWatchlist();
 }
 
-onMounted(loadWatchlist);
+onMounted(() => {
+  loadWatchlist();
+  startClock();
+});
+onUnmounted(stopClock);
 
 async function analyze(code) {
   analyzing.value = true;
   analyzeError.value = "";
+  cross.value = null;       // 换股时清掉旧十字线
+  pinned.value = false;     // 并恢复跟随模式
+  await syncClock();        // v9f.20：换股时重新校时，保证时间连贯准确
   try {
     const r = await FenshiAnalyzeStock(code);
     if (r) {
@@ -183,41 +204,86 @@ async function analyze(code) {
   }
 }
 
-// ==================== 图表几何（v9f.19 通达信式坐标轴） ====================
-// 绘图区：x 52~856（左侧留给纵轴双行标签），y 8~352（底部留给时间刻度）
+// ==================== 大时钟（v9f.20） ====================
+// 准确性设计：以后端返回的本机系统时间为基准计算 offset；
+// 每次换股时重新校时；每 250ms 用 performance.now() 平滑推进，避免整秒跳变
+const clockStr = ref("--:--:--");
+const clockDate = ref("");
+let clockOffset = 0;   // backendNow - localNow，ms
+let clockTimer = null;
+let syncing = false;
+
+async function syncClock() {
+  if (syncing) return;
+  syncing = true;
+  try {
+    const t0 = performance.now();
+    const backendMs = await FenshiNowTime();
+    const rtt = performance.now() - t0; // 本地调用开销（wails 桥接，<5ms）
+    clockOffset = backendMs + rtt / 2 - Date.now();
+  } catch (e) {
+    // 校时失败退化为本地时钟（Windows 默认 NTP 同步，误差秒级内）
+    clockOffset = 0;
+  } finally {
+    syncing = false;
+  }
+}
+
+function fmtClock(ms) {
+  const d = new Date(ms);
+  const p = (n) => String(n).padStart(2, "0");
+  const wd = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"][d.getDay()];
+  clockDate.value = `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${wd}`;
+  clockStr.value = `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
+function startClock() {
+  syncClock();
+  fmtClock(Date.now() + clockOffset);
+  clockTimer = setInterval(() => fmtClock(Date.now() + clockOffset), 250);
+  // 每 5 分钟重新校时一次，防漂移
+  setInterval(syncClock, 5 * 60 * 1000);
+}
+function stopClock() {
+  if (clockTimer) clearInterval(clockTimer);
+  clockTimer = null;
+}
+
+// ==================== 图表几何（v9f.20） ====================
 const CH = { x0: 52, x1: 856, y0: 8, y1: 352 };
 
-const pricePath = computed(() => ptsPath(result.value ? result.value.trend : [], "now"));
-const vwapPath = computed(() => ptsPath(result.value ? result.value.trend : [], "avg"));
+const pricePath = computed(() => ptsPath("now"));
+const vwapPath = computed(() => ptsPath("avg"));
 
-// 统一取价格范围：价格线+均价线+昨收 一起算，保证三者都在图内
 function valueRange(trend) {
   let min = Infinity, max = -Infinity;
   const consider = (v) => { if (v > 0) { if (v > max) max = v; if (v < min) min = v; } };
   for (const t of trend) { consider(t.now); consider(t.avg); }
   const pc = result.value ? result.value.prevClose : 0;
-  if (pc > 0) { consider(pc); }
+  if (pc > 0) consider(pc);
   if (!isFinite(min)) return { min: 0, max: 1 };
-  // 上下各留 5% 余量，避免线贴边
+  // v9f.20：以昨收为轴的对称量程（通达信风格），且保底至少 ±1% 摆动空间，避免波动小时图形糊满整屏
+  if (pc > 0) {
+    let half = Math.max(Math.abs(max - pc), Math.abs(pc - min), pc * 0.012);
+    return { min: pc - half * 1.1, max: pc + half * 1.1 };
+  }
   const pad = (max - min) * 0.05 || max * 0.01 || 0.01;
   return { min: min - pad, max: max + pad };
 }
 
-function xOf(i, n) {
-  return CH.x0 + (i / (n - 1)) * (CH.x1 - CH.x0);
-}
-function yOf(v, min, max) {
-  return CH.y1 - ((v - min) / (max - min || 1)) * (CH.y1 - CH.y0);
-}
+function xOf(i, n) { return CH.x0 + (i / (n - 1)) * (CH.x1 - CH.x0); }
+function yOf(v, min, max) { return CH.y1 - ((v - min) / (max - min || 1)) * (CH.y1 - CH.y0); }
 
-function ptsPath(trend, col) {
+function ptsPath(col) {
+  const r = result.value;
+  const trend = r ? r.trend : [];
   if (!trend || trend.length < 2) return "";
   const { min, max } = valueRange(trend);
   const n = trend.length;
   return trend.map((t, i) => xOf(i, n).toFixed(1) + "," + yOf(t[col], min, max).toFixed(1)).join(" ");
 }
 
-// 纵轴：4 条网格线（不含上下边界），通达信格式 = 价格 + 对应涨跌幅
+// 纵轴 4 条网格线：价格+涨跌幅
 const gridLines = computed(() => {
   const r = result.value;
   if (!r || !r.trend || r.trend.length < 2) return [];
@@ -228,17 +294,11 @@ const gridLines = computed(() => {
     const v = min + ((max - min) * k) / (N + 1);
     const y = yOf(v, min, max);
     const pct = r.prevClose > 0 ? ((v - r.prevClose) / r.prevClose) * 100 : 0;
-    lines.push({
-      y,
-      priceLabel: v.toFixed(2),
-      pctLabel: (pct >= 0 ? "+" : "") + pct.toFixed(2) + "%",
-      pctClass: pct > 0.001 ? "up" : (pct < -0.001 ? "down" : ""),
-    });
+    lines.push({ y, priceLabel: v.toFixed(2), pctLabel: (pct >= 0 ? "+" : "") + pct.toFixed(2) + "%", pctClass: pct > 0.001 ? "up" : (pct < -0.001 ? "down" : "") });
   }
   return lines;
 });
 
-// 昨收基准虚线 y 坐标
 const prevCloseY = computed(() => {
   const r = result.value;
   if (!r || !r.trend || r.trend.length < 2 || !r.prevClose) return -999;
@@ -246,21 +306,112 @@ const prevCloseY = computed(() => {
   return yOf(r.prevClose, min, max);
 });
 
-// 横轴：9:30~11:30/13:00~15:00 固定 5 个时间刻度（A股交易日 4 小时 240 分钟）
+// 横轴：每半小时一个刻度（A股 4 小时：9:30-11:30, 13:00-15:00）
 const xTicks = computed(() => {
   const r = result.value;
   if (!r || !r.trend || r.trend.length < 2) return [];
-  // 按数据点比例定位：A 股 09:30 起 241 个分钟点，上午 121 点（09:30~11:30）
-  const n = r.trend.length;
-  const marks = [
-    { idx: 0, label: "9:30" },
-    { idx: Math.round(n * 0.25), label: "10:30" },
-    { idx: Math.round(n * 0.5) - 1, label: "11:30/13:00" },
-    { idx: Math.round(n * 0.75), label: "14:00" },
-    { idx: n - 1, label: "15:00" },
-  ];
-  return marks.map((m) => ({ x: xOf(Math.min(m.idx, n - 1), n), label: m.label }));
+  const n = r.trend.length; // 全天 240/241 个分钟点，上午 121 点
+  const amPts = Math.min(n, 121);
+  const label = (m) => {
+    const h = Math.floor(m / 60), mm = m % 60;
+    return (h === 11 && mm === 30) ? "11:30/13:00" : `${h}:${String(mm).padStart(2, "0")}`;
+  };
+  // 分钟偏移数组：0,30,60,90,120（上午）→ 120(=11:30/13:00),150,180,210,240（下午映射回轴位置）
+  const mins = [0, 30, 60, 90, 120, 150, 180, 210, 240];
+  return mins.map((m) => {
+    // 轴位置：上午按 0..120 分钟 → 索引 0..amPts-1；下午 m>120 → 121..n-1
+    let idx;
+    if (m <= 120) idx = Math.round((m / 120) * (amPts - 1));
+    else idx = Math.min(n - 1, (amPts - 1) + Math.round(((m - 120) / 120) * (n - amPts)));
+    return { x: xOf(idx, n), label: label(m) };
+  });
 });
+
+// 最新价小红点
+const lastDot = computed(() => {
+  const r = result.value;
+  const trend = r ? r.trend : [];
+  if (!trend || trend.length < 2) return null;
+  const { min, max } = valueRange(trend);
+  const n = trend.length;
+  return { x: xOf(n - 1, n), y: yOf(trend[n - 1].now, min, max) };
+});
+
+// ==================== 十字线交互（v9f.20 通达信式） ====================
+// 默认跟随模式：移动鼠标即跟随；单击=固定在那一刻（数据不再随移动变）；双击=解除固定恢复跟随
+const cross = ref(null);        // {x, y}
+const pinned = ref(false);      // true=单击固定中
+const crossInfo = ref(null);    // {time, price, avg, pct, pctColor}
+let hoverIdx = -1;
+let pinIdx = -1;
+
+function chartIndexFromEvent(e) {
+  const r = result.value;
+  if (!r || !r.trend || r.trend.length < 2) return -1;
+  const svg = e.currentTarget.querySelector("svg");
+  if (!svg) return -1;
+  const rect = svg.getBoundingClientRect();
+  // viewBox 860 宽，preserveAspectRatio=none → 线性映射
+  const vx = ((e.clientX - rect.left) / rect.width) * 860;
+  if (vx < CH.x0 || vx > CH.x1) return -1;
+  const n = r.trend.length;
+  let idx = Math.round(((vx - CH.x0) / (CH.x1 - CH.x0)) * (n - 1));
+  return Math.max(0, Math.min(n - 1, idx));
+}
+
+function buildCross(idx) {
+  const r = result.value;
+  if (!r || idx < 0) return;
+  const trend = r.trend;
+  const { min, max } = valueRange(trend);
+  const t = trend[idx];
+  const x = xOf(idx, trend.length);
+  // 十字线横线放在该点价格位置
+  const y = yOf(t.now, min, max);
+  cross.value = { x, y };
+  const pct = r.prevClose > 0 ? ((t.now - r.prevClose) / r.prevClose) * 100 : 0;
+  crossInfo.value = {
+    time: String(t.time || ""),
+    price: `价 ${t.now.toFixed(2)}  均 ${(t.avg || 0).toFixed(2)}`,
+    avg: `幅 ${(pct >= 0 ? "+" : "") + pct.toFixed(2)}%`,
+    pct: "",
+    pctColor: "#999",
+  };
+}
+
+// 提示框 x：靠右时翻到十字线左侧，防溢出图外
+const tipX = computed(() => {
+  if (!cross.value) return 0;
+  return cross.value.x > 860 - 170 ? cross.value.x - 160 : cross.value.x + 10;
+});
+
+function onChartMove(e) {
+  // 固定模式下移动不更新数据（通达信行为），但仍显示十字线
+  if (pinned.value) return;
+  const idx = chartIndexFromEvent(e);
+  if (idx < 0) return;
+  hoverIdx = idx;
+  buildCross(idx);
+}
+
+function onChartLeave() {
+  if (!pinned.value) { cross.value = null; crossInfo.value = null; hoverIdx = -1; }
+}
+
+function onChartClick() {
+  // 单击：固定当前那一刻（数据冻结）
+  if (!pinned.value && hoverIdx >= 0) {
+    pinned.value = true;
+    pinIdx = hoverIdx;
+    buildCross(pinIdx);
+  }
+}
+
+function onChartDblClick() {
+  // 双击：解除固定，恢复移动跟随
+  pinned.value = false;
+  pinIdx = -1;
+}
 </script>
 
 <style scoped>
@@ -273,24 +424,36 @@ const xTicks = computed(() => {
 .add-msg { font-size: 12px; margin-bottom: 6px; }
 .add-msg.ok { color: #22a45d; }
 .add-msg.err { color: #e04b4b; }
-/* v9f.19：大标题——名称+代码，显眼突出 */
-.chart-title { display: flex; align-items: baseline; gap: 2px; }
+/* v9f.20：标题居中 */
+.chart-title { display: flex; justify-content: center; align-items: baseline; gap: 2px; }
 .title-name { font-size: 22px; font-weight: 700; color: #f5c542; letter-spacing: 1px; }
 .title-code { font-size: 16px; font-weight: 600; color: #7eb8ff; }
-.quote-line { font-size: 15px; margin-bottom: 6px; }
+/* 顶部行情行 + 大时钟 */
+.top-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.quote-line { font-size: 15px; }
 .quote-line .price { font-size: 24px; font-weight: bold; margin-right: 6px; }
 .up { color: #e04b4b; }
 .down { color: #22a45d; }
 .dim { color: #888; font-size: 12px; margin-left: 8px; }
-/* v9f.19：图放大占满右侧，保持绘图区比例 */
-.chart-wrap { width: 100%; }
+/* 大时钟（显眼醒目） */
+.big-clock { text-align: right; line-height: 1.2; }
+.clock-time { display: block; font-family: "Microsoft YaHei", "SimHei", sans-serif; font-size: 30px; font-weight: 700; color: #00e5a0; letter-spacing: 2px; font-variant-numeric: tabular-nums; text-shadow: 0 0 12px rgba(0,229,160,.45); }
+.clock-date { font-size: 12px; color: #7ea8a0; }
+.chart-wrap { width: 100%; cursor: crosshair; }
 .trend-svg { width: 100%; height: auto; aspect-ratio: 860 / 400; background: #111; border-radius: 4px; display: block; }
 .grid-line { stroke: #2a2a2a; stroke-width: 1; }
 .axis-line { stroke: #555; stroke-width: 1; }
-.axis-text { fill: #999; font-size: 11px; font-family: monospace; }
-.axis-text.up { fill: #e04b4b; }
-.axis-text.down { fill: #22a45d; }
+/* v9f.20：坐标全部黑体 */
+.hei { font-family: "SimHei", "Microsoft YaHei", sans-serif; }
+.axis-text { fill: #e8e8e8; font-size: 12px; font-weight: 600; }
+.axis-text.up { fill: #ff6b6b; }
+.axis-text.down { fill: #4ade80; }
 .preclose-line { stroke: #666; stroke-width: 1; stroke-dasharray: 4 3; }
 .legend-text { font-size: 12px; }
+.last-dot { filter: drop-shadow(0 0 3px rgba(255,77,79,.8)); }
+.cross-line { stroke: #888; stroke-width: 1; stroke-dasharray: 5 3; pointer-events: none; }
+.tip-rect { fill: rgba(20,20,20,.92); stroke: #4aa3ff; stroke-width: 1; }
+.tip-text { fill: #ddd; font-size: 12px; font-family: "SimHei", "Microsoft YaHei", sans-serif; }
+.tip-text.strong { fill: #fff; font-weight: 700; font-size: 14px; }
 .advice-box { background: #1f2937; color: #d1e7ff; padding: 8px 10px; border-radius: 4px; margin: 8px 0; font-size: 13px; }
 </style>

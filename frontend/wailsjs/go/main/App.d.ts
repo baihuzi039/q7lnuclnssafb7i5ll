@@ -900,3 +900,4 @@ export function FenshiWatchlistRemove(arg1:string):Promise<string>;
 export function FenshiAnalyzeStock(arg1:string): Promise<any>;
 
 export function FenshiHotBoards(): Promise<Array<any>>;
+export function FenshiNowTime(): Promise<bigint>;

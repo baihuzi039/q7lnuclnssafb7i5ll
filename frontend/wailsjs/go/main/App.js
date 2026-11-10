@@ -1789,3 +1789,7 @@ export function FenshiAnalyzeStock(arg1) {
 export function FenshiHotBoards() {
   return window['go']['main']['App']['FenshiHotBoards']();
 }
+
+export function FenshiNowTime() {
+  return window['go']['main']['App']['FenshiNowTime']();
+}
