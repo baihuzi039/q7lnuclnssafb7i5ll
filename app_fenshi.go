@@ -275,6 +275,31 @@ func fenshiTencentCode(code string) (string, bool) {
 	}
 }
 
+// fenshiDirectClient 与原作者 SharedHTTPClient 同款：直连 + Go 默认 crypto/tls，不走代理不装指纹。
+// 实测证明候选池扫描（同款路径）在此网络环境正常，故设为第一优先。
+// fenshiUrls 返回域名备援列表：主域 + 92备用节点（东财同一接口多域名部署）
+func fenshiUrls(rawURL string) []string {
+	urls := []string{rawURL}
+	if strings.Contains(rawURL, "push2his.eastmoney.com") {
+		urls = append(urls, strings.Replace(rawURL, "push2his.eastmoney.com", "92.push2his.eastmoney.com", 1))
+	} else if strings.Contains(rawURL, "push2.eastmoney.com") {
+		urls = append(urls, strings.Replace(rawURL, "push2.eastmoney.com", "92.push2.eastmoney.com", 1))
+	}
+	return urls
+}
+
+var fenshiDirectClient = &http.Client{
+	Timeout: 3 * time.Second,
+	Transport: &http.Transport{
+		Proxy:                 nil,
+		TLSHandshakeTimeout:   3 * time.Second,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          10,
+		IdleConnTimeout:       60 * time.Second,
+		ResponseHeaderTimeout: 5 * time.Second,
+	},
+}
+
 var fenshiHTTPClient = &http.Client{
 	Timeout: 3 * time.Second,
 	Transport: &http.Transport{
@@ -304,7 +329,16 @@ var fenshiPlainClient = &http.Client{
 
 func fenshiGet(rawURL string) (map[string]any, error) {
 	var lastErr error
-	// 第0优先：http 明文（无TLS指纹，风控不拦）
+	// 第0优先：直连 + Go 默认 TLS（与候选池扫描/原作者同款路径，实测最稳）
+	for i, u := range fenshiUrls(rawURL) {
+		m, err := fenshiGetOnce(u, fenshiDirectClient)
+		if err == nil {
+			return m, nil
+		}
+		lastErr = err
+		logger.SugaredLogger.Warnf("fenshiGet 直连第%d次失败: %v", i+1, err)
+	}
+	// 第1优先：http 明文（无TLS指纹，风控不拦）
 	if strings.HasPrefix(rawURL, "https://") {
 		plainURL := "http://" + rawURL[len("https://"):]
 		m, err := fenshiGetOnce(plainURL, fenshiPlainClient)
@@ -314,14 +348,7 @@ func fenshiGet(rawURL string) (map[string]any, error) {
 		lastErr = err
 		logger.SugaredLogger.Warnf("fenshiGet http明文失败，转https: %v", err)
 	}
-	attempts := []string{rawURL}
-	// 域名备援：主域被风控时换备用节点（东财同一接口多域名部署）
-	if strings.Contains(rawURL, "push2his.eastmoney.com") {
-		attempts = append(attempts, strings.Replace(rawURL, "push2his.eastmoney.com", "92.push2his.eastmoney.com", 1))
-	} else if strings.Contains(rawURL, "push2.eastmoney.com") {
-		attempts = append(attempts, strings.Replace(rawURL, "push2.eastmoney.com", "92.push2.eastmoney.com", 1))
-	}
-	for i, u := range attempts {
+	for i, u := range fenshiUrls(rawURL) {
 		m, err := fenshiGetOnce(u, fenshiHTTPClient)
 		if err == nil {
 			return m, nil
