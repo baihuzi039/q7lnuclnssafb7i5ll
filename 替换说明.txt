@@ -1,9 +1,18 @@
-替换说明（v9e.9.6.1 CI修复）
+替换说明（v9e.9.8 合并版 = v9e.9.5+9.6.1+9.7 一次换完）
 ================================================
-CI #59 三处编译错修复：
-  - app_auto_pick.go 补 import models（183行undefined: models）
-  - writeOne 改收 []string（匿名struct传参类型不匹配×2）
-逻辑不变：14:50自动选股→自动写策略跟踪批次（一夜/牛指各一批，去重+回填）。
+改动点：
+1. 【版本号自动跟随（本次新需求）】底栏绿色版本徽标改为动态读取CI注入的版本号：
+   以后每次打tag发包，exe底栏自动显示该tag版本（如 v9e.9.8），不再需要手动改代码。
+   未装到对应版本时徽标显示旧值=一眼识别exe新旧。
+2. （含v9e.9.7）策略跟踪「补齐历史」按钮：回测表空档日一键补齐批次+回填涨幅
+3. （含v9e.9.6.1）14:50自动选股自动写策略跟踪批次
+4. （含v9e.9.5）换手率显示口径修复（去双乘）
 
-包含1个文件：
-  app_auto_pick.go
+包含6个文件：
+  frontend/src/App.vue（动态版本徽标）
+  app_auto_pick.go（自动选股落批次，CI修复版）
+  app_track_export.go（历史区间补齐）
+  frontend/src/components/TrackCenter.vue（补齐历史按钮）
+  frontend/src/components/DataManage.vue（换手率修复+排序红涨绿跌）
+  frontend/wailsjs/go/main/App.js + App.d.ts（共2个绑定文件）
+实际7个文件（App.js与App.d.ts分开算）。

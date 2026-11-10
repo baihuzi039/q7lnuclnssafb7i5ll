@@ -52,6 +52,7 @@ const enableFund = ref(false)
 // 受设置页「启用合约行情」开关（enableContracts）控制
 const enableContracts = ref(true)
 const isCustomBuild = ref(false)
+const appVersion = ref('')
 const enableAgent = ref(false)
 const enableDarkTheme = ref(darkTheme)
 const content = ref('未经授权,禁止商业目的!\n\n数据来源于网络,仅供参考;投资有风险,入市需谨慎')
@@ -1508,6 +1509,7 @@ window.onerror = function (msg, source, lineno, colno, error) {
 
 onBeforeMount(() => {
   GetVersionInfo().then(result => {
+    appVersion.value = (result.version || '').replace(/-track-release$/, '')
     if(result.officialStatement){
       content.value = result.officialStatement+"\n\n"+content.value
     }
@@ -1802,7 +1804,7 @@ onMounted(() => {
                                 :dropdown-props="{ menuProps: () => ({ style: 'max-height: 60vh; overflow-y: auto;' }) }"
                                 responsive
                         />
-                        <n-tag type="success" size="medium" round style="margin-left: 16px; font-weight: bold; font-size: 15px; box-shadow: 0 0 6px rgba(99,224,148,.8);">v9e.9.2</n-tag>
+                        <n-tag v-if="appVersion" type="success" size="medium" round style="margin-left: 16px; font-weight: bold; font-size: 15px; box-shadow: 0 0 6px rgba(99,224,148,.8);">{{ appVersion }}</n-tag>
                       </n-flex>
                     </n-card>
                   </n-gi>

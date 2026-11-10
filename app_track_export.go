@@ -10,6 +10,7 @@ import (
 
 	"github.com/xuri/excelize/v2"
 	"go-stock/backend/db"
+	"go-stock/backend/logger"
 	"go-stock/backend/models"
 )
 
@@ -61,7 +62,8 @@ func (a *App) ExportTrackExcel(strategyID, batchID uint) string {
 
 // exportYiye 一夜持股：追加到「五年明细」sheet
 // 原版列(15): A买入日@ B代码@ C名称@ D板块@ E v3评分0 F标记@ G评分0 H买入价0.00
-//            I次日开盘0.00 J次日最高0.00 K次日收盘0.00 L开盘卖收益% M最高卖收益% N收盘卖收益% O次日备注@
+//
+//	I次日开盘0.00 J次日最高0.00 K次日收盘0.00 L开盘卖收益% M最高卖收益% N收盘卖收益% O次日备注@
 func exportYiye(tplPath, outPath string, items []models.TrackItem, batch models.TrackBatch) error {
 	data, err := os.ReadFile(tplPath)
 	if err != nil {
@@ -202,4 +204,94 @@ func colLetter(n int) string {
 		n /= 26
 	}
 	return s
+}
+
+// BackfillTrackRange v9e.9.7 一键补齐历史区间信号日（用户需求：回测表信号日只到某日，
+// 之后到今天的空档由引擎按历史日线重演补建批次，持仓涨幅自动回填，得到最新完整回测表）
+func (a *App) BackfillTrackRange(strategyName, startDate, endDate string) string {
+	defer PanicHandler()
+	parse := func(s string) (time.Time, error) {
+		s = strings.TrimSpace(s)
+		if d, err := time.Parse("2006-01-02", s); err == nil {
+			return d, nil
+		}
+		return time.Parse("20060102", s)
+	}
+	sd, err := parse(startDate)
+	if err != nil {
+		return "开始日期格式错误（示例 2026-11-01）"
+	}
+	ed, err := parse(endDate)
+	if err != nil {
+		return "结束日期格式错误（示例 2026-11-10）"
+	}
+	if ed.After(time.Now()) {
+		ed = time.Now()
+	}
+	var st models.TrackStrategy
+	if err := db.Dao.Where("name = ?", strategyName).First(&st).Error; err != nil {
+		return "找不到策略: " + strategyName
+	}
+	aa := &App{}
+	created, empty, skip := 0, 0, 0
+	notes := []string{}
+	for d := sd; !d.After(ed); d = d.AddDate(0, 0, 1) {
+		if d.Weekday() == time.Saturday || d.Weekday() == time.Sunday {
+			continue
+		}
+		day := d.Format("2006-01-02")
+		var cnt int64
+		db.Dao.Model(&models.TrackBatch{}).Where("strategy_id = ? AND trade_date = ?", st.ID, day).Count(&cnt)
+		if cnt > 0 {
+			skip++
+			continue
+		}
+		var lines []string
+		switch strategyName {
+		case "一夜持股":
+			r := aa.RunOvernightScanJSON(day)
+			if !r.Trading {
+				notes = append(notes, day+":"+r.Note)
+				break
+			}
+			for i, c := range r.Cands {
+				if i >= 5 {
+					break
+				}
+				lines = append(lines, fmt.Sprintf("%s %s 仓%.0f%%", c.Code, c.Name, c.Weight*100))
+			}
+		case "牛指T+1":
+			_, mode := GetAutoPickSettings()
+			if mode == "" {
+				mode = "标准"
+			}
+			r := aa.RunNiuZhiScanJSON(day, mode)
+			if !r.Trading {
+				notes = append(notes, day+":"+r.Note)
+				break
+			}
+			for i, c := range r.Cands {
+				if i >= 5 {
+					break
+				}
+				lines = append(lines, fmt.Sprintf("%s %s 评分%d", c.Code, c.Name, c.Score))
+			}
+		default:
+			return "该策略暂不支持历史重演（当前支持：一夜持股/牛指T+1）"
+		}
+		if len(lines) == 0 {
+			empty++
+			continue
+		}
+		msg := aa.CreateTrackBatch(st.ID, day, strings.Join(lines, "\n"))
+		logger.SugaredLogger.Infof("补齐 %s %s: %s", strategyName, day, msg)
+		created++
+	}
+	FillAllTrackHoldings()
+	out := fmt.Sprintf("补齐完成[%s %s ~ %s]: 新建批次%d个, 无信号日%d个, 已有跳过%d个, 持仓涨幅已回填",
+		strategyName, sd.Format("2006-01-02"), ed.Format("2006-01-02"), created, empty, skip)
+	if len(notes) > 0 && len(notes) <= 8 {
+		out += "\n" + strings.Join(notes, "\n")
+	}
+	return out
 }

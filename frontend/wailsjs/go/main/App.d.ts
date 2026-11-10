@@ -890,3 +890,5 @@ export function GetAutoPickSettingsJSON(): Promise<any>;
 export function RunAutoPickNow(): Promise<string>;
 
 export function FetchSingleStockKLine(arg1:string, arg2:number): Promise<number>;
+
+export function BackfillTrackRange(arg1:string, arg2:string, arg3:string): Promise<string>;

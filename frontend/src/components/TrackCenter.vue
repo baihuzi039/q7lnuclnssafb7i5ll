@@ -58,6 +58,7 @@
             {{ importing ? '导入中...' : '扫描收件箱导入' }}
           </n-button>
           <n-button size="small" type="info" ghost @click="openInboxDir">打开收件箱文件夹</n-button>
+          <n-button v-if="isOvernightTab || isNiuZhiTab" size="small" type="info" ghost :loading="backfilling" @click="doBackfill">补齐历史</n-button>
           <n-button size="small" type="warning" ghost :loading="exporting" @click="exportCSV">导出 CSV</n-button>
           <n-button size="small" type="success" ghost :loading="exportingXlsx" @click="exportXlsxTop">导出 Excel</n-button>
           <n-button size="small" @click="refresh">刷新</n-button>
@@ -151,7 +152,7 @@ import {
   OpenTrackInboxDir, ExportTrackCSV, ExportTrackExcel, DeleteTrackBatch, DeleteTrackItem,
   RenameTrackStrategy,
   RunOvernightScan, RunOvernightAppendCloseSheet, RunOvernightScanJSON,
-  RunNiuZhiScanJSON
+  RunNiuZhiScanJSON, BackfillTrackRange
 } from '../../wailsjs/go/main/App'
 import {EventsOn, EventsOff} from '../../wailsjs/runtime'
 
@@ -538,6 +539,23 @@ function openInboxDir() {
   })
 }
 
+const backfilling = ref(false)
+async function doBackfill() {
+  const st = (strategies.value || []).find(s => String(s.id) === String(activeStrategy.value))
+  if (!st) return
+  backfilling.value = true
+  try {
+    // 默认补齐区间：该策略最早批次日期（或90天前）~ 今天
+    const today = new Date().toISOString().slice(0,10)
+    let start = batches.value.length ? batches.value[batches.value.length-1].tradeDate : ''
+    if (!start) start = new Date(Date.now()-90*86400000).toISOString().slice(0,10)
+    const msg = await BackfillTrackRange(st.name, start, today)
+    if (window.$message) window.$message.info(msg || '补齐完成')
+    refresh()
+  } catch(e) {
+    if (window.$message) window.$message.error('补齐失败: ' + e)
+  } finally { backfilling.value = false }
+}
 function exportCSV() {
   exporting.value = true
   ExportTrackCSV(Number(activeStrategy.value)).then((res) => {
