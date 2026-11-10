@@ -1771,11 +1771,11 @@ export function RunAutoPickNow() {
   return window['go']['main']['App']['RunAutoPickNow']();
 }
 
-export function FetchSingleStockKLine(arg1:string, arg2:number) {
+export function FetchSingleStockKLine(arg1, arg2) {
   return window['go']['main']['App']['FetchSingleStockKLine'](arg1, arg2);
 }
 
-export function BackfillTrackRange(arg1:string, arg2:string, arg3:string) {
+export function BackfillTrackRange(arg1, arg2, arg3) {
   return window['go']['main']['App']['BackfillTrackRange'](arg1, arg2, arg3);
 }
 
