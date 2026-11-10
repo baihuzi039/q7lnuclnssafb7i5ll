@@ -23,6 +23,7 @@ import (
 	"go-stock/backend/logger"
 	"go-stock/backend/models"
 
+	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
@@ -170,7 +171,13 @@ func upsertDailyKLine(stockCode, stockName string, limit int) int {
 			Turnover:  toF(k.TurnoverRate),
 		})
 	}
-	err := db.Dao.Clauses(clause.OnConflict{DoNothing: true}).CreateInBatches(&rows, 500).Error
+	// v9e.9.2：已有行不再跳过，改为只补写 涨跌幅/换手率 两列（历史0值数据的补齐路径）
+	// 新行全量插入；旧行仅更新 pct_change/turnover（东财源带值；MAC源为0时不会破坏已有值——0行不更新由下方SQL的WHERE条件保证）
+	err := db.Dao.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "stock_code"}, {Name: "day"}},
+		DoUpdates: clause.AssignmentColumns([]string{"pct_change", "turnover"}),
+		Where:     clause.Where{Exprs: []clause.Expression{gorm.Expr("excluded.pct_change <> 0 OR excluded.turnover <> 0")}},
+	}).CreateInBatches(&rows, 500).Error
 	if err != nil {
 		logger.SugaredLogger.Errorf("日线入库失败 %s(%s): %s", stockName, stockCode, err.Error())
 		return 0

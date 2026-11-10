@@ -1794,7 +1794,7 @@ onMounted(() => {
                   </n-gi>
                   <n-gi style="position: fixed;bottom:0;z-index: 9;width: 100%;">
                     <n-card size="small" style="--wails-draggable:no-drag">
-                      <n-flex align="center" justify="space-between">
+                      <n-flex align="center">
                         <n-menu style="font-size: 18px; flex: 1;"
                                 v-model:value="activeKey"
                                 mode="horizontal"
@@ -1802,7 +1802,7 @@ onMounted(() => {
                                 :dropdown-props="{ menuProps: () => ({ style: 'max-height: 60vh; overflow-y: auto;' }) }"
                                 responsive
                         />
-                        <n-tag type="success" size="small" round style="margin-right: 8px; font-weight: bold;">v9e.9</n-tag>
+                        <n-tag type="success" size="medium" round style="margin-left: 16px; font-weight: bold; font-size: 15px; box-shadow: 0 0 6px rgba(99,224,148,.8);">v9e.9.2</n-tag>
                       </n-flex>
                     </n-card>
                   </n-gi>

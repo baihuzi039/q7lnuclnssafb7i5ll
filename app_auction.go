@@ -171,12 +171,6 @@ func (a *App) SnapshotAuctionNow() string {
 		a.doSnapshotAuction()
 	}()
 	return "指令已收到，结果稍后弹窗（非交易日/已存在会直接提示；开抓则完成后提示）"
-	auctionSnapRunning = true
-	go func() {
-		defer func() { auctionSnapRunning = false }()
-		a.doSnapshotAuction()
-	}()
-	return "竞价快照抓取已启动，全市场约 5~8 分钟完成，完成后本页状态会更新"
 }
 
 // doSnapshotAuction 用东财选股接口分页拉全市场快照入库
