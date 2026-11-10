@@ -1,73 +1,72 @@
 <template>
   <div class="fenshi-center">
-    <n-card size="small" class="mb12">
-      <div class="toolbar">
-        <n-button type="primary" :loading="scanning" @click="scanPool">扫描候选池（高开+放量）</n-button>
-        <n-button :loading="loadingBoards" @click="loadBoards">热门板块</n-button>
-        <n-input v-model:value="manualCode" placeholder="输入代码如 600519" size="small" style="width: 180px" @keyup.enter="analyzeManual" clearable />
-        <n-button :loading="analyzing" @click="analyzeManual">分析该股</n-button>
-        <span class="tip">候选池口径：高开1-7% + 量比≥3，剔除ST。建议基于2022-2025全市场分钟数据历史统计。</span>
+    <div class="layout">
+      <!-- 左侧：自选股 -->
+      <div class="left-pane">
+        <n-card size="small" title="自选股" class="mb12">
+          <div class="add-row">
+            <n-input v-model:value="manualCode" placeholder="输入代码如 600519" size="small" @keyup.enter="addStock" clearable />
+            <n-button type="primary" size="small" :loading="adding" @click="addStock">添加</n-button>
+          </div>
+          <n-data-table :columns="watchColumns" :data="watchlist" :max-height="520" size="small" :row-props="rowProps" striped />
+        </n-card>
       </div>
-    </n-card>
 
-    <div class="main-grid">
-      <n-card size="small" title="候选池（按量比排序）" class="mb12">
-        <n-data-table :columns="candColumns" :data="cands" :max-height="360" size="small" :row-props="rowProps" striped />
-      </n-card>
-
-      <n-card size="small" v-if="result" class="mb12" :title="'分时分析 · ' + result.name + '（' + result.code + '）'">
-        <div class="quote-line">
-          <span class="price" :class="result.changePct >= 0 ? 'up' : 'down'">{{ result.price.toFixed(2) }}</span>
-          <span :class="result.changePct >= 0 ? 'up' : 'down'"> {{ result.changePct.toFixed(2) }}%</span>
-          <span class="dim">高开 {{ result.gapPct.toFixed(2) }}% · 量比 {{ result.volumeRate.toFixed(2) }} · 均价 {{ result.avgPrice.toFixed(2) }}（{{ result.aboveVwapP >= 0 ? '+' : '' }}{{ result.aboveVwapP.toFixed(2) }}%）· 15分钟动量 {{ result.mom15.toFixed(2) }}%</span>
-        </div>
-        <svg class="trend-svg" :viewBox="'0 0 720 180'" preserveAspectRatio="none">
-          <polyline :points="vwapPath" fill="none" stroke="#e6b800" stroke-width="1.2" />
-          <polyline :points="pricePath" fill="none" stroke="#4aa3ff" stroke-width="1.6" />
-        </svg>
-        <div class="advice-box">{{ result.advice }}</div>
-        <n-space vertical size="small">
-          <n-tag v-for="s in result.signals" :key="s.name" :type="s.type === 'buy' ? 'success' : (s.type === 'warn' ? 'error' : 'info')" size="small" style="white-space: normal; height: auto; padding: 4px 8px;">
-            {{ s.name }}：{{ s.desc }}（{{ s.prob }}）
-          </n-tag>
-        </n-space>
-      </n-card>
-      <n-card size="small" v-else class="mb12" title="分时分析">
-        <n-alert v-if="analyzeError" type="error" :title="'分析失败'" style="margin-bottom: 8px">{{ analyzeError }}</n-alert>
-        <n-empty description="点击候选池某行，或输入代码分析" />
-      </n-card>
-
-      <n-card size="small" title="热门板块（涨停家数）">
-        <n-data-table :columns="boardColumns" :data="boards" :max-height="300" size="small" striped />
-      </n-card>
+      <!-- 右侧：大分时图 -->
+      <div class="right-pane">
+        <n-card size="small" v-if="result" class="mb12" :title="'分时分析 · ' + result.name + '（' + result.code + '）'">
+          <div class="quote-line">
+            <span class="price" :class="result.changePct >= 0 ? 'up' : 'down'">{{ result.price.toFixed(2) }}</span>
+            <span :class="result.changePct >= 0 ? 'up' : 'down'"> {{ result.changePct.toFixed(2) }}%</span>
+            <span class="dim">高开 {{ result.gapPct.toFixed(2) }}% · 量比 {{ result.volumeRate.toFixed(2) }} · 均价 {{ result.avgPrice.toFixed(2) }}（{{ result.aboveVwapP >= 0 ? '+' : '' }}{{ result.aboveVwapP.toFixed(2) }}%）· 15分钟动量 {{ result.mom15.toFixed(2) }}%</span>
+          </div>
+          <svg class="trend-svg" :viewBox="'0 0 720 320'" preserveAspectRatio="none">
+            <polyline :points="vwapPath" fill="none" stroke="#e6b800" stroke-width="1.2" />
+            <polyline :points="pricePath" fill="none" stroke="#4aa3ff" stroke-width="1.6" />
+          </svg>
+          <div class="advice-box">{{ result.advice }}</div>
+          <n-space vertical size="small">
+            <n-tag v-for="s in result.signals" :key="s.name" :type="s.type === 'buy' ? 'success' : (s.type === 'warn' ? 'error' : 'info')" size="small" style="white-space: normal; height: auto; padding: 4px 8px;">
+              {{ s.name }}：{{ s.desc }}（{{ s.prob }}）
+            </n-tag>
+          </n-space>
+        </n-card>
+        <n-card size="small" v-else class="mb12" title="分时分析">
+          <n-alert v-if="analyzeError" type="error" :title="'分析失败'" style="margin-bottom: 8px">{{ analyzeError }}</n-alert>
+          <n-empty description="点击左侧自选股，或输入代码添加后分析" />
+        </n-card>
+      </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, h } from "vue";
+import { ref, computed, onMounted, h } from "vue";
 import { NCard, NButton, NDataTable, NTag, NInput, NSpace, NEmpty, NAlert } from "naive-ui";
-import { FenshiScanCandidates, FenshiAnalyzeStock, FenshiHotBoards } from "../../wailsjs/go/main/App";
+import { FenshiWatchlist, FenshiWatchlistAdd, FenshiWatchlistRemove, FenshiAnalyzeStock } from "../../wailsjs/go/main/App";
 
-const scanning = ref(false);
-const loadingBoards = ref(false);
-const cands = ref([]);
-const boards = ref([]);
+const watchlist = ref([]);
 const result = ref(null);
 const manualCode = ref("");
+const adding = ref(false);
+const analyzing = ref(false);
+const analyzeError = ref("");
 
-const candColumns = [
-  { title: "代码", key: "code", width: 80 },
-  { title: "名称", key: "name", width: 100 },
-  { title: "现价", key: "price", width: 70 },
-  { title: "涨幅%", key: "changePct", width: 70 },
-  { title: "量比", key: "volumeRate", width: 60 },
-  { title: "换手%", key: "turnover", width: 60 },
-];
-const boardColumns = [
-  { title: "板块", key: "f14" },
-  { title: "涨幅%", key: "f3", width: 70 },
-  { title: "涨停家数", key: "f104", width: 80 },
+const watchColumns = [
+  { title: "代码", key: "code", width: 76 },
+  { title: "名称", key: "name", width: 92 },
+  {
+    title: "",
+    key: "del",
+    width: 36,
+    render(row) {
+      return h(
+        NButton,
+        { size: "tiny", quaternary: true, type: "error", onClick: (e) => { e.stopPropagation(); removeStock(row.code); } },
+        { default: () => "删" }
+      );
+    },
+  },
 ];
 
 function rowProps(row) {
@@ -77,26 +76,36 @@ function rowProps(row) {
   };
 }
 
-async function scanPool() {
-  scanning.value = true;
+async function loadWatchlist() {
   try {
-    cands.value = await FenshiScanCandidates();
-  } finally {
-    scanning.value = false;
+    watchlist.value = await FenshiWatchlist();
+  } catch (e) {
+    watchlist.value = [];
   }
 }
 
-async function loadBoards() {
-  loadingBoards.value = true;
+async function addStock() {
+  const code = (manualCode.value || "").trim();
+  if (!code) return;
+  adding.value = true;
   try {
-    boards.value = await FenshiHotBoards();
+    const msg = await FenshiWatchlistAdd(code);
+    if (msg && msg.indexOf("成功") >= 0) {
+      manualCode.value = "";
+      await loadWatchlist();
+      await analyze(code);
+    }
   } finally {
-    loadingBoards.value = false;
+    adding.value = false;
   }
 }
 
-const analyzing = ref(false);
-const analyzeError = ref("");
+async function removeStock(code) {
+  await FenshiWatchlistRemove(code);
+  await loadWatchlist();
+}
+
+onMounted(loadWatchlist);
 
 async function analyze(code) {
   analyzing.value = true;
@@ -118,11 +127,6 @@ async function analyze(code) {
   }
 }
 
-async function analyzeManual() {
-  const code = (manualCode.value || "").trim();
-  if (code) await analyze(code);
-}
-
 const pricePath = computed(() => ptsPath(result.value ? result.value.trend : [], "now"));
 const vwapPath = computed(() => ptsPath(result.value ? result.value.trend : [], "avg"));
 
@@ -134,7 +138,7 @@ function ptsPath(trend, col) {
   const n = trend.length;
   return trend.map((t, i) => {
     const x = (i / (n - 1)) * 716 + 2;
-    const y = 176 - ((t[col] - min) / (max - min || 1)) * 168;
+    const y = 316 - ((t[col] - min) / (max - min || 1)) * 308;
     return x.toFixed(1) + "," + y.toFixed(1);
   }).join(" ");
 }
@@ -143,14 +147,15 @@ function ptsPath(trend, col) {
 <style scoped>
 .fenshi-center { padding: 12px; }
 .mb12 { margin-bottom: 12px; }
-.toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-.tip { font-size: 12px; color: #999; }
-.main-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.layout { display: grid; grid-template-columns: 300px 1fr; gap: 12px; }
+.left-pane { min-width: 0; }
+.right-pane { min-width: 0; }
+.add-row { display: flex; gap: 8px; margin-bottom: 8px; }
 .quote-line { font-size: 15px; margin-bottom: 6px; }
-.quote-line .price { font-size: 22px; font-weight: bold; margin-right: 6px; }
+.quote-line .price { font-size: 24px; font-weight: bold; margin-right: 6px; }
 .up { color: #e04b4b; }
 .down { color: #22a45d; }
 .dim { color: #888; font-size: 12px; margin-left: 8px; }
-.trend-svg { width: 100%; height: 180px; background: #111; border-radius: 4px; }
+.trend-svg { width: 100%; height: 320px; background: #111; border-radius: 4px; }
 .advice-box { background: #1f2937; color: #d1e7ff; padding: 8px 10px; border-radius: 4px; margin: 8px 0; font-size: 13px; }
 </style>

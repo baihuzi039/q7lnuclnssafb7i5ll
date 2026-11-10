@@ -891,6 +891,12 @@ export function RunAutoPickNow(): Promise<string>;
 
 export function FenshiScanCandidates(): Promise<Array<any>>;
 
+export function FenshiWatchlist():Promise<any>;
+
+export function FenshiWatchlistAdd(arg1:string):Promise<string>;
+
+export function FenshiWatchlistRemove(arg1:string):Promise<string>;
+
 export function FenshiAnalyzeStock(arg1:string): Promise<any>;
 
 export function FenshiHotBoards(): Promise<Array<any>>;

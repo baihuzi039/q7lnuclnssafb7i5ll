@@ -1770,6 +1770,18 @@ export function FenshiScanCandidates() {
   return window['go']['main']['App']['FenshiScanCandidates']();
 }
 
+export function FenshiWatchlist() {
+  return window['go']['main']['App']['FenshiWatchlist']();
+}
+
+export function FenshiWatchlistAdd(arg1) {
+  return window['go']['main']['App']['FenshiWatchlistAdd'](arg1);
+}
+
+export function FenshiWatchlistRemove(arg1) {
+  return window['go']['main']['App']['FenshiWatchlistRemove'](arg1);
+}
+
 export function FenshiAnalyzeStock(arg1) {
   return window['go']['main']['App']['FenshiAnalyzeStock'](arg1);
 }
