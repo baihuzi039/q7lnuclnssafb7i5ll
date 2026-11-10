@@ -16,21 +16,20 @@
       <!-- 右侧：大分时图 -->
       <div class="right-pane">
         <n-card size="small" v-if="result" class="mb12 chart-card">
-          <!-- 顶部一行：时钟左上（蓝框） + 行情紧随（绿框） + 名称代码正中间放大 -->
+          <!-- v9f.20.3：三栏 grid，物理隔离互不重叠：时钟左 | 名称中 | 行情右 -->
           <div class="top-row">
             <div class="big-clock">
               <span class="clock-time">{{ clockStr }}</span>
               <span class="clock-date">{{ clockDate }}</span>
             </div>
+            <div class="chart-title">
+              <span class="title-name">{{ result.name }}</span>
+              <span class="title-code">（{{ stripPrefix(result.code) }}）</span>
+            </div>
             <div class="quote-line">
               <span class="price" :class="result.changePct >= 0 ? 'up' : 'down'">{{ result.price.toFixed(2) }}</span>
               <span :class="result.changePct >= 0 ? 'up' : 'down'"> {{ result.changePct.toFixed(2) }}%</span>
               <span class="dim">高开 {{ result.gapPct.toFixed(2) }}% · 量比 {{ result.volumeRate.toFixed(2) }} · 均价 {{ result.avgPrice.toFixed(2) }}（{{ result.aboveVwapP >= 0 ? '+' : '' }}{{ result.aboveVwapP.toFixed(2) }}%）· 15分钟动量 {{ result.mom15.toFixed(2) }}%</span>
-            </div>
-            <!-- 名称+代码：正中间放大 -->
-            <div class="chart-title">
-              <span class="title-name">{{ result.name }}</span>
-              <span class="title-code">（{{ stripPrefix(result.code) }}）</span>
             </div>
           </div>
 
@@ -424,24 +423,19 @@ function onChartDblClick() {
 .add-msg { font-size: 12px; margin-bottom: 6px; }
 .add-msg.ok { color: #22a45d; }
 .add-msg.err { color: #e04b4b; }
-/* v9f.20.2：时钟左上，行情紧随，名称+代码绝对居中并放大 */
-.top-row { position: relative; }
-.chart-title { position: absolute; left: 50%; transform: translateX(-50%); display: flex; align-items: baseline; gap: 2px; white-space: nowrap; }
-.title-name { font-size: 28px; font-weight: 800; color: #f5c542; letter-spacing: 2px; text-shadow: 0 0 10px rgba(245,197,66,.35); }
-.title-code { font-size: 18px; font-weight: 700; color: #7eb8ff; }
-.big-clock { flex-shrink: 0; }
-.clock-time { font-size: 24px; }
-.quote-line { flex-shrink: 1; text-align: left; }
-/* 顶部行情行 + 大时钟 */
-.top-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
-.quote-line { font-size: 13px; text-align: center; flex: 1; min-width: 0; }
-.quote-line .dim { margin-left: 6px; }
-.quote-line .price { font-size: 22px; font-weight: bold; margin-right: 6px; }
+/* v9f.20.3：三栏 grid（1fr auto 1fr），中栏真居中，左右栏各自独立永不重叠 */
+.top-row { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 12px; margin-bottom: 6px; }
+.big-clock { justify-self: start; line-height: 1.2; }
+.chart-title { justify-self: center; display: flex; align-items: baseline; gap: 2px; white-space: nowrap; }
+.title-name { font-size: 26px; font-weight: 800; color: #f5c542; letter-spacing: 2px; text-shadow: 0 0 10px rgba(245,197,66,.35); }
+.title-code { font-size: 17px; font-weight: 700; color: #7eb8ff; }
+.quote-line { justify-self: end; text-align: right; font-size: 12px; line-height: 1.5; }
+.quote-line .dim { margin-left: 0; }
+.quote-line .price { font-size: 18px; font-weight: bold; margin-right: 6px; }
 .up { color: #e04b4b; }
 .down { color: #22a45d; }
 .dim { color: #888; font-size: 12px; margin-left: 8px; }
 /* 大时钟（显眼醒目） */
-.big-clock { text-align: right; line-height: 1.2; }
 .clock-time { display: block; font-family: "Microsoft YaHei", "SimHei", sans-serif; font-size: 30px; font-weight: 700; color: #00e5a0; letter-spacing: 2px; font-variant-numeric: tabular-nums; text-shadow: 0 0 12px rgba(0,229,160,.45); }
 .clock-date { font-size: 12px; color: #7ea8a0; }
 .chart-wrap { width: 100%; cursor: crosshair; }
