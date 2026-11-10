@@ -19,6 +19,7 @@ import {
   GetVersionInfo,
   GetAutoPickSettingsJSON,
   SetAutoPickSettings,
+  SetAutoPickSettingsFull,
   RunAutoPickNow,
 } from "../../wailsjs/go/main/App";
 import {NTag, NTooltip, NIcon, useMessage, useDialog} from "naive-ui";
