@@ -241,7 +241,8 @@ func (a *App) doSnapshotAuction() {
 func (a *App) GetAuctionCount() map[string]interface{} {
 	defer PanicHandler()
 	now := time.Now().Unix()
-	if cached, ok := auctionCountCache.Load(); ok && now-auctionCountCacheAt.Load() < 60 {
+	cached := auctionCountCache.Load()
+	if cached != nil && now-auctionCountCacheAt.Load() < 60 {
 		return cached.(map[string]interface{})
 	}
 	out := map[string]interface{}{}

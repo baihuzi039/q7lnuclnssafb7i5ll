@@ -1,13 +1,9 @@
-替换说明（v9f.2 合并版 = v9f.1 CI修复 + v9f.2 刷新回填 + v9f.3 切页卡顿优化）
+替换说明（v9f.3 CI#62修复补丁）
 ================================================
-本次真正变化的文件（7个）：
-1. app_track_export.go                       名称刷新修正（CI#61修复）
-2. backend/data/eastmoney_kline_api.go       新增导出 ConvertStockCodeToEMSecid
-3. frontend/src/components/TrackCenter.vue   刷新按钮先回填涨幅再取数
-4. frontend/wailsjs/go/main/App.js           绑定+FillAllTrackHoldings / SetAutoPickSettingsFull
-5. frontend/wailsjs/go/main/App.d.ts         同上
-6. app_daily_kline.go                        状态查询60秒缓存+同步完成强刷（切页卡顿优化）
-7. app_auction.go                            竞价统计60秒缓存+导入/快照完成强刷
+CI#62 报错: assignment mismatch: 2 variables but atomic.Value.Load returns 1 value
+根因: atomic.Value.Load() 只有1个返回值，误写成 Go map 的 "v, ok :=" 两值形式
+修复: 改为 cached := Load(); cached != nil 判空（app_daily_kline.go:270 / app_auction.go:244）
 
-与上包相同文件：v9f 首发的其余 9 个文件（app.go/app_auto_pick.go/app_track.go/
-app_track_stats.go/settings_api.go/settings.vue）无变化，若 v9f 已提交过则无需再覆盖。
+本次真正变化的文件（2个）：
+1. app_daily_kline.go
+2. app_auction.go

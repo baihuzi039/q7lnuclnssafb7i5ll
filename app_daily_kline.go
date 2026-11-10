@@ -267,7 +267,8 @@ func (a *App) SyncDailyKLineNow() string {
 func (a *App) GetDailyKLineSyncStatus() models.DailyKLineSyncStatus {
 	defer PanicHandler()
 	now := time.Now().Unix()
-	if cached, ok := klineStatusCache.Load(); ok && now-klineStatusCacheAt.Load() < 60 {
+	cached := klineStatusCache.Load()
+	if cached != nil && now-klineStatusCacheAt.Load() < 60 {
 		c := cached.(models.DailyKLineSyncStatus)
 		c.Running = klineSyncRunning.Load()
 		if v := klineLastSyncLoad(); v != "" {
