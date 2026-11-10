@@ -19,6 +19,7 @@ import (
 	"go-stock/backend/data"
 	"go-stock/backend/db"
 	"go-stock/backend/logger"
+	"go-stock/backend/models"
 )
 
 // EmitAutoPickDone 推送自动选股结果到前端（ctx为nil时跳过，测试环境无窗口）
@@ -36,8 +37,8 @@ var autoPickRunning atomic.Bool
 func GetAutoPickSettings() (enabled bool, nzMode string) {
 	nzMode = "标准"
 	var v struct {
-		AutoPickEnable      int
-		AutoPickNiuZhiMode  string
+		AutoPickEnable     int
+		AutoPickNiuZhiMode string
 	}
 	db.Dao.Raw(`SELECT auto_pick_enable as auto_pick_enable,
 		COALESCE(auto_pick_niuzhi_mode,'标准') as auto_pick_niuzhi_mode
@@ -169,15 +170,11 @@ func (a *App) autoPickJob(manual bool) string {
 }
 
 // autoPickSaveTrack v9e.9.6 把自动选股结果写入策略跟踪批次（复用 CreateTrackBatch 的解析与去重逻辑）
-// 一夜 → 策略"一夜持股"；牛指 → 策略"牛指T+1"。批次Source=auto。
+// 一夜 → 策略"一夜持股"；牛指 → 策略"牛指T+1"。v9e.9.6.1修复CI编译错：writeOne收[]string、补models import。
 func autoPickSaveTrack(day string, orn OvernightScanResult, nzn NiuZhiScanResult) {
 	defer PanicHandler()
-	writeOne := func(strategyName, score string, cands []struct {
-		Code  string
-		Name  string
-		Extra string
-	}) {
-		if len(cands) == 0 {
+	writeOne := func(strategyName string, lines []string) {
+		if len(lines) == 0 {
 			return
 		}
 		var st models.TrackStrategy
@@ -185,35 +182,26 @@ func autoPickSaveTrack(day string, orn OvernightScanResult, nzn NiuZhiScanResult
 			logger.SugaredLogger.Errorf("自动记录失败: 找不到策略 %s", strategyName)
 			return
 		}
-		lines := ""
-		for _, c := range cands {
-			lines += c.Code + " " + c.Name + " " + c.Extra + "\n"
-		}
 		a := &App{}
-		msg := a.CreateTrackBatch(st.ID, day, lines)
+		msg := a.CreateTrackBatch(st.ID, day, strings.Join(lines, "\n"))
 		logger.SugaredLogger.Infof("自动写入策略跟踪[%s]: %s", strategyName, msg)
 	}
-	type candLine struct {
-		Code  string
-		Name  string
-		Extra string
-	}
 	// 一夜：Top1+候补（最多5只）
-	var on []candLine
+	var on []string
 	for i, c := range orn.Cands {
 		if i >= 5 {
 			break
 		}
-		on = append(on, candLine{Code: c.Code, Name: c.Name, Extra: fmt.Sprintf("仓%.0f%%", c.Weight*100)})
+		on = append(on, fmt.Sprintf("%s %s 仓%.0f%%", c.Code, c.Name, c.Weight*100))
 	}
-	writeOne("一夜持股", "", on)
+	writeOne("一夜持股", on)
 	// 牛指：Top1+候补（最多5只）
-	var nz []candLine
+	var nz []string
 	for i, c := range nzn.Cands {
 		if i >= 5 {
 			break
 		}
-		nz = append(nz, candLine{Code: c.Code, Name: c.Name, Extra: fmt.Sprintf("评分%d", c.Score)})
+		nz = append(nz, fmt.Sprintf("%s %s 评分%d", c.Code, c.Name, c.Score))
 	}
-	writeOne("牛指T+1", "", nz)
+	writeOne("牛指T+1", nz)
 }
