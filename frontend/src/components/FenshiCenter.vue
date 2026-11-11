@@ -26,15 +26,23 @@
           </div>
         </n-card>
         <n-card size="small" v-if="result" class="mb12 chart-card">
-          <!-- v9f.20.3：三栏 grid，物理隔离互不重叠：时钟左 | 名称中 | 行情右 -->
+          <!-- v9f.23.4：五栏布局——时钟左 | 加价黄框 | 名称中(蓝框) | 让价黄框 | 行情右(绿框) -->
           <div class="top-row">
             <div class="big-clock">
               <span class="clock-time">{{ clockStr }}</span>
               <span class="clock-date">{{ clockDate }}</span>
             </div>
+            <div class="limit-box buy">
+              <div class="limit-label">最高加价</div>
+              <div class="limit-val" :key="'b' + result.price">{{ (result.price * 1.02).toFixed(2) }}</div>
+            </div>
             <div class="chart-title">
               <span class="title-name">{{ result.name }}</span>
               <span class="title-code">（{{ stripPrefix(result.code) }}）</span>
+            </div>
+            <div class="limit-box sell">
+              <div class="limit-label">最高让价</div>
+              <div class="limit-val" :key="'s' + result.price">{{ (result.price * 0.98).toFixed(2) }}</div>
             </div>
             <div class="quote-line">
               <div class="live-price-row">
@@ -151,8 +159,14 @@ function stripPrefix(code) {
   return String(code).replace(/^(sh|sz|bj)/i, "");
 }
 
+// v9f.23.4：当前正在分析的股高亮标蓝背景，一眼看出选中哪只
+const selectedCode = ref("");
 function rowProps(row) {
-  return { style: "cursor:pointer", onClick: () => analyze(row.code) };
+  const sel = row.code === selectedCode.value;
+  return {
+    style: "cursor:pointer" + (sel ? ";background: rgba(0,120,255,0.35); outline: 1px solid #4aa3ff;" : ""),
+    onClick: () => analyze(row.code),
+  };
 }
 
 async function loadWatchlist() {
@@ -202,6 +216,7 @@ onUnmounted(() => {
 
 async function analyze(code) {
   analyzing.value = true;
+  selectedCode.value = code; // v9f.23.4：记录选中，列表高亮
   analyzeError.value = "";
   cross.value = null;       // 换股时清掉旧十字线
   pinned.value = false;     // 并恢复跟随模式
@@ -512,7 +527,15 @@ function onChartDblClick() {
 .add-msg.ok { color: #22a45d; }
 .add-msg.err { color: #e04b4b; }
 /* v9f.20.3：三栏 grid（1fr auto 1fr），中栏真居中，左右栏各自独立永不重叠 */
-.top-row { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 12px; margin-bottom: 6px; }
+/* v9f.23.4：五栏 grid——时钟 | 加价框 | 名称 | 让价框 | 行情 */
+.top-row { display: grid; grid-template-columns: auto auto 1fr auto auto; align-items: center; gap: 14px; margin-bottom: 6px; }
+.limit-box { border: 1px solid #666; border-radius: 4px; padding: 2px 10px; text-align: center; min-width: 96px; }
+.limit-box.buy { border-color: rgba(224,75,75,.6); }
+.limit-box.sell { border-color: rgba(34,164,93,.6); }
+.limit-label { font-size: 11px; color: #999; line-height: 1.3; }
+.limit-val { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.limit-box.buy .limit-val { color: #e04b4b; animation: price-blink 0.5s ease-in-out 1; }
+.limit-box.sell .limit-val { color: #22a45d; animation: price-blink 0.5s ease-in-out 1; }
 .big-clock { justify-self: start; line-height: 1.2; }
 .chart-title { justify-self: center; display: flex; align-items: baseline; gap: 2px; white-space: nowrap; }
 .title-name { font-size: 26px; font-weight: 800; color: #f5c542; letter-spacing: 2px; text-shadow: 0 0 10px rgba(245,197,66,.35); }
