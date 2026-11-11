@@ -151,7 +151,7 @@ import {
   ListTrackStrategies, AddTrackStrategy, DelTrackStrategy, GetTrackBatches,
   GetRecentTrackItems, GetTrackStats, CreateTrackBatch, ImportTrackInboxFolder,
   OpenTrackInboxDir, ExportTrackCSV, ExportTrackExcel, DeleteTrackBatch, DeleteTrackItem, RefreshAllTrackNames,
-  FillAllTrackHoldings,
+  
   RenameTrackStrategy,
   RunOvernightScan, RunOvernightAppendCloseSheet, RunOvernightScanJSON,
   RunNiuZhiScanJSON, BackfillTrackRange
@@ -514,7 +514,7 @@ function onSwitchStrategy() {
 function refresh() {
   if (!activeStrategy.value) return
   const id = Number(activeStrategy.value)
-  FillAllTrackHoldings().then(() => {
+  window.go.main.App.FillAllTrackHoldings().then(() => {
     GetTrackBatches(id).then((res) => { batches.value = res || [] })
     GetRecentTrackItems(id, 200).then((res) => { items.value = res || [] })
     GetTrackStats().then((res) => {
