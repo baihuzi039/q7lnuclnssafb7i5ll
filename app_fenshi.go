@@ -260,7 +260,7 @@ func fenshiAnalyzeFromTencent(stockCode string) (*FenshiAnalysisResult, error) {
 	// v9f.22：规则引擎建议（大盘/历史数据失败不阻塞主分析）
 	code, _ := fenshiTencentCode(stockCode)
 	dctx := fenshiDailyCtx(code)
-	env := a.FenshiIndexEnvGet()
+	env := fenshiIndexEnv()
 	adv := fenshiRunRules(fenshiRuleIn{Trend: res.Trend, PrevClose: dctx.PrevClose, PrevHigh: dctx.PrevHigh, PrevLow: dctx.PrevLow, MA5: dctx.MA5, MA20: dctx.MA20, ShPct: env.ShPct, Now: time.Now()})
 	res.AdviceV2 = &adv
 	// 兑底说明
@@ -781,7 +781,7 @@ func fenshiAnalyzeCore(stockCode string) *FenshiAnalysisResult {
 	// v9f.22：规则引擎建议（失败不阻塞）
 	if code, ok := fenshiTencentCode(stockCode); ok {
 		dctx := fenshiDailyCtx(code)
-		env := a.FenshiIndexEnvGet()
+		env := fenshiIndexEnv()
 		adv := fenshiRunRules(fenshiRuleIn{Trend: resE.Trend, PrevClose: dctx.PrevClose, PrevHigh: dctx.PrevHigh, PrevLow: dctx.PrevLow, MA5: dctx.MA5, MA20: dctx.MA20, ShPct: env.ShPct, Now: time.Now()})
 		resE.AdviceV2 = &adv
 	}
@@ -1015,7 +1015,7 @@ func fenshiAnalyzeFromSina(stockCode string) (*FenshiAnalysisResult, error) {
 	res.Signals = fenshiBuildSignals(res)
 	// v9f.22：规则引擎建议（新浪 5 分钟粒度数据较粗，仍可出倾向；失败不阻塞）
 	dctx := fenshiDailyCtx(tcode)
-	env := a.FenshiIndexEnvGet()
+	env := fenshiIndexEnv()
 	adv := fenshiRunRules(fenshiRuleIn{Trend: res.Trend, PrevClose: dctx.PrevClose, PrevHigh: dctx.PrevHigh, PrevLow: dctx.PrevLow, MA5: dctx.MA5, MA20: dctx.MA20, ShPct: env.ShPct, Now: time.Now()})
 	res.AdviceV2 = &adv
 	res.Advice = fmt.Sprintf("[新浪源·5分钟级] %s 昨收%.2f 今开%.2f 现价%.2f（分钟粒度较粗、量比不可用，趋势判断仍有效）", tcode, preClose, openPx, nowPx)
@@ -1122,8 +1122,8 @@ func fenshiDailyCtx(tcode string) FenshiDailyCtx {
 	return ctx
 }
 
-// FenshiIndexEnvGet 大盘环境查询（前端/规则引擎用）
-func (a *App) FenshiIndexEnvGet() FenshiIndexEnv {
+// fenshiIndexEnv 大盘环境查询（v9f.22.1 修复：改为普通函数，fenshiAnalyzeCore 无接收者也能调用）
+func fenshiIndexEnv() FenshiIndexEnv {
 	env := FenshiIndexEnv{}
 	sh, err1 := fenshiIndexPct("sh000001")
 	sz, err2 := fenshiIndexPct("sz399001")
@@ -1133,6 +1133,11 @@ func (a *App) FenshiIndexEnvGet() FenshiIndexEnv {
 	}
 	env.ShPct, env.SzPct, env.CybPct = sh, sz, cyb
 	env.Ok = err1 == nil && err2 == nil && err3 == nil
+}
+
+// FenshiIndexEnvGet wails 绑定用（转发）
+func (a *App) FenshiIndexEnvGet() FenshiIndexEnv {
+	return fenshiIndexEnv()
 	return env
 }
 
