@@ -255,16 +255,29 @@ func appendYiyeInPlace(sheetPath string, items []models.TrackItem, batch models.
 	}
 	defer f.Close()
 	const sheet = "五年明细"
-	start, srcRow, err := appendStartRow(f, sheet, 1)
-	if err != nil {
-		return err
+	// [v9f.17] 插入式归位：找第一个日期>批次日的行，整段插到它前面；无则追加末尾
+	rows, _ := f.GetRows(sheet)
+	pos := insertPosByDate(f, sheet, batch.TradeDate)
+	n := len(items)
+	if pos == 0 {
+		pos = len(rows) + 1
+	}
+	if n > 0 {
+		if err := f.InsertRows(sheet, pos, n); err != nil {
+			return fmt.Errorf("插入行失败: %w", err)
+		}
+	}
+	// 样式源：插入区上一行（若为表头则取下一行）
+	styleSrc := pos - 1
+	if styleSrc < 2 {
+		styleSrc = pos + n
 	}
 	added := 0
-	for _, it := range items {
+	for i, it := range items {
 		if batchExistsInSheet(f, sheet, batch.TradeDate, stockCode6(it.StockCode)) {
 			continue
 		}
-		row := itoa(start)
+		row := itoa(pos + i)
 		f.SetCellStr(sheet, "A"+row, batch.TradeDate)
 		f.SetCellStr(sheet, "B"+row, stockCode6(it.StockCode))
 		f.SetCellStr(sheet, "C"+row, it.StockName)
@@ -291,13 +304,12 @@ func appendYiyeInPlace(sheetPath string, items []models.TrackItem, batch models.
 			f.SetCellFloat(sheet, "K"+row, base*(1+it.NextClosePct/100), 2, 64)
 		}
 		f.SetCellStr(sheet, "O"+row, nextNote(batch.TradeDate))
-		start++
 		added++
 	}
 	if added == 0 {
 		return nil // 幂等：全部已存在
 	}
-	copyRowStyles(f, sheet, srcRow, srcRow+1, start-1, 15)
+	copyRowStyles(f, sheet, styleSrc, styleSrc+1, pos, pos+added-1)
 	return f.SaveAs(sheetPath)
 }
 
@@ -328,16 +340,28 @@ func appendNiuZhiInPlace(sheetPath string, items []models.TrackItem, batch model
 	}
 	defer f.Close()
 	const sheet = "近五年回测明细"
-	start, srcRow, err := appendStartRow(f, sheet, 1)
-	if err != nil {
-		return err
+	// [v9f.17] 插入式归位（同一夜逻辑）
+	rows, _ := f.GetRows(sheet)
+	pos := insertPosByDate(f, sheet, batch.TradeDate)
+	n := len(items)
+	if pos == 0 {
+		pos = len(rows) + 1
+	}
+	if n > 0 {
+		if err := f.InsertRows(sheet, pos, n); err != nil {
+			return fmt.Errorf("插入行失败: %w", err)
+		}
+	}
+	styleSrc := pos - 1
+	if styleSrc < 2 {
+		styleSrc = pos + n
 	}
 	added := 0
-	for _, it := range items {
+	for i, it := range items {
 		if batchExistsInSheet(f, sheet, batch.TradeDate, stockCode6(it.StockCode)) {
 			continue
 		}
-		row := itoa(start)
+		row := itoa(pos + i)
 		f.SetCellStr(sheet, "A"+row, batch.TradeDate)
 		f.SetCellStr(sheet, "B"+row, stockCode6(it.StockCode))
 		f.SetCellStr(sheet, "C"+row, it.StockName)
@@ -371,13 +395,12 @@ func appendNiuZhiInPlace(sheetPath string, items []models.TrackItem, batch model
 			f.SetCellFloat(sheet, "K"+row, base*(1+it.NextClosePct/100), 2, 64)
 			f.SetCellFloat(sheet, "L"+row, it.NextClosePct/100, 6, 64)
 		}
-		start++
 		added++
 	}
 	if added == 0 {
 		return nil
 	}
-	copyRowStyles(f, sheet, srcRow, srcRow+1, start-1, 18)
+	copyRowStyles(f, sheet, styleSrc, styleSrc+1, pos, pos+added-1)
 	return f.SaveAs(sheetPath)
 }
 
@@ -551,13 +574,38 @@ func copyRowStyles(f *excelize.File, sheet string, srcRow, dstStart, dstEnd, col
 	}
 }
 
-// nextNote 次日备注（模板惯例：导入日写"待MM-DD"=下一交易日，17:40回填后可改）
+// nextNote [v9f.17] 次日备注：优先用真实下一交易日（从本地K线取任意票的下一交易日）；取不到才用日历+1天
 func nextNote(tradeDate string) string {
+	var row models.DailyKLine
+	if err := db.Dao.Where("day > ?", tradeDate).Order("day ASC").First(&row).Error; err == nil && row.Day != "" {
+		t, e := time.Parse("2006-01-02", row.Day)
+		if e == nil {
+			return "待" + t.Format("01-02")
+		}
+	}
 	t, err := time.Parse("2006-01-02", tradeDate)
 	if err != nil {
 		return "待次日"
 	}
 	return "待" + t.AddDate(0, 0, 1).Format("01-02")
+}
+
+// [v9f.17] insertPosByDate 按日期找插入位置：返回A列中第一个日期>target的行号（保持升序归位）
+// 返回0表示应插到末尾（全部行都≤target）
+func insertPosByDate(f *excelize.File, sheet string, target string) int {
+	rows, err := f.GetRows(sheet)
+	if err != nil {
+		return 0
+	}
+	for i, r := range rows {
+		if len(r) >= 1 {
+			d := strings.TrimSpace(r[0])
+			if len(d) >= 10 && d > target { // 只比对合法日期格式行，跳过表头/小计
+				return i + 1 // 1-based行号
+			}
+		}
+	}
+	return 0
 }
 
 func itoa(i int) string { return fmt.Sprintf("%d", i) }
