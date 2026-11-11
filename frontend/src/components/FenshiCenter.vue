@@ -84,9 +84,9 @@
                 <g v-if="crossInfo">
                   <rect :x="tipX" :y="CH.y0 + 4" width="150" height="88" rx="4" class="tip-rect" />
                   <text :x="tipX + 10" :y="CH.y0 + 24" class="tip-text strong">{{ crossInfo.time }}</text>
-                  <text :x="tipX + 10" :y="CH.y0 + 42" class="tip-text" :fill="crossInfo.priceColor">{{ crossInfo.price }}</text>
+                  <text :x="tipX + 10" :y="CH.y0 + 42" class="tip-text" :style="{ fill: crossInfo.priceColor }">{{ crossInfo.price }}</text>
                   <text :x="tipX + 10" :y="CH.y0 + 58" class="tip-text">{{ crossInfo.avg }}</text>
-                  <text :x="tipX + 10" :y="CH.y0 + 74" class="tip-text" :fill="crossInfo.pctColor">{{ crossInfo.pctStr }}</text>
+                  <text :x="tipX + 10" :y="CH.y0 + 74" class="tip-text" :style="{ fill: crossInfo.pctColor }">{{ crossInfo.pctStr }}</text>
                 </g>
               </g>
               <!-- 图例 -->
