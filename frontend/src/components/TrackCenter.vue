@@ -574,8 +574,24 @@ function fixNames() {
   }).catch(() => { fixingNames.value = false })
 }
 // [v9f.11] 补齐历史：用户可选日期范围（默认最近10个自然日）；范围越长耗时越久，点击后提示
-const backfillStart = ref(Date.now() - 10*86400000)
-const backfillEnd = ref(Date.now())
+// [v9f.13] 日期范围与查询状态持久化：切模块/重启后恢复上次状态
+const LS_KEY = 'trackQueryState.v1'
+function loadQueryState() {
+  try { return JSON.parse(localStorage.getItem(LS_KEY)) || {} } catch { return {} }
+}
+function saveQueryState() {
+  try {
+    localStorage.setItem(LS_KEY, JSON.stringify({
+      start: backfillStart.value, end: backfillEnd.value,
+      rows: queryRows.value, batchIds: queryBatchIds.value
+    }))
+  } catch {}
+}
+const _qs = loadQueryState()
+const backfillStart = ref(_qs.start || Date.now() - 10*86400000)
+const backfillEnd = ref(_qs.end || Date.now())
+const queryRows = ref(_qs.rows || [])
+const queryBatchIds = ref(_qs.batchIds || [])
 async function doBackfill() {
   const st = (strategies.value || []).find(s => String(s.id) === String(activeStrategy.value))
   if (!st) return
@@ -599,8 +615,6 @@ async function doBackfill() {
 }
 // [v9f.12] 日期范围查询批次：增量叠加显示，点「清空查询」恢复（多次查询结果保留）
 const querying = ref(false)
-const queryRows = ref([])
-const queryBatchIds = ref([])
 async function doQueryBatches() {
   const fmt = (ts) => {
     const d = new Date(ts)
@@ -639,6 +653,7 @@ async function doQueryBatches() {
       }
     }
     queryRows.value = queryRows.value.concat(got)
+    saveQueryState()
     if (window.$dialog) window.$dialog.success({ title: '查询完成', content: `查询到 ${inRange.length} 个批次，本次新增 ${got.length} 条明细。多次查询增量叠加，点「清空查询」恢复。` })
     else if (window.$message) window.$message.success(`查询到 ${inRange.length} 个批次，新增 ${got.length} 条明细`, { duration: 8000 })
   } catch(err) {
@@ -648,6 +663,7 @@ async function doQueryBatches() {
 function clearQuery() {
   queryRows.value = []
   queryBatchIds.value = []
+  saveQueryState()
   if (window.$message) window.$message.info('已清空查询结果，恢复默认列表')
 }
 function exportCSV() {
