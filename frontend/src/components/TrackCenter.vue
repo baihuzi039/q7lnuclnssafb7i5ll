@@ -609,9 +609,19 @@ async function doQueryBatches() {
   const s = fmt(backfillStart.value)
   const e = fmt(backfillEnd.value)
   if (s > e) { if (window.$message) window.$message.warning('开始日期不能晚于结束日期'); return }
-  const inRange = (batches.value || []).filter(b => String(b.tradeDate || '') >= s && String(b.tradeDate || '') <= e)
+  // [v9f.12.1] 不依赖页面已有 batches 状态，直接拉后端全量批次再过滤（防止页面未加载/切策略导致空判断）
+  let all = []
+  try {
+    all = await window.go.main.App.GetTrackBatches(Number(activeStrategy.value)) || []
+  } catch (err) {
+    if (window.$dialog) window.$dialog.error({ title: '查询失败', content: '获取批次列表失败: ' + err })
+    else if (window.$message) window.$message.error('获取批次列表失败: ' + err)
+    return
+  }
+  const inRange = all.filter(b => String(b.tradeDate || '') >= s && String(b.tradeDate || '') <= e)
   if (!inRange.length) {
-    if (window.$message) window.$message.info(`范围内无批次（${s} ~ ${e}）。可点「补齐历史」按此范围重演建批次，完成后再查询`, {duration: 8000})
+    if (window.$dialog) window.$dialog.warning({ title: '范围内无批次', content: `在 ${s} ~ ${e} 范围内没有找到任何批次（当前策略共 ${all.length} 个批次）。可点「补齐历史」按此范围重演建批次，完成后再查询。` })
+    else if (window.$message) window.$message.warning(`范围内无批次（${s} ~ ${e}），共${all.length}个批次。可点「补齐历史」建批次`, { duration: 10000 })
     return
   }
   querying.value = true
@@ -629,7 +639,8 @@ async function doQueryBatches() {
       }
     }
     queryRows.value = queryRows.value.concat(got)
-    if (window.$message) window.$message.info(`查询到 ${inRange.length} 个批次，本次新增 ${got.length} 条明细；多次查询增量叠加，点「清空查询」恢复`, {duration: 8000})
+    if (window.$dialog) window.$dialog.success({ title: '查询完成', content: `查询到 ${inRange.length} 个批次，本次新增 ${got.length} 条明细。多次查询增量叠加，点「清空查询」恢复。` })
+    else if (window.$message) window.$message.success(`查询到 ${inRange.length} 个批次，新增 ${got.length} 条明细`, { duration: 8000 })
   } catch(err) {
     if (window.$message) window.$message.error('查询失败: ' + err)
   } finally { querying.value = false }
