@@ -62,6 +62,8 @@
             <n-date-picker v-model:value="backfillStart" type="date" size="small" style="width:130px" :clearable="false" placement="bottom-start" />
             <n-date-picker v-model:value="backfillEnd" type="date" size="small" style="width:130px" :clearable="false" placement="bottom-start" />
             <n-tooltip trigger="hover"><template #trigger><n-button size="small" type="info" ghost :loading="backfilling" @click="doBackfill">补齐历史</n-button></template>重演选定日期范围（跳过周末/已有批次自动跳过；每日需跑一次本地扫描，范围越长耗时越久）</n-tooltip>
+            <n-button size="small" type="primary" ghost :loading="querying" @click="doQueryBatches">查询批次</n-button>
+            <n-button size="small" type="error" ghost :disabled="!queryRows.length" @click="clearQuery">清空查询</n-button>
           </template>
           <n-button size="small" type="warning" ghost :loading="exporting" @click="exportCSV">导出 CSV</n-button>
           <n-button size="small" type="success" ghost :loading="exportingXlsx" @click="exportXlsxTop">导出 Excel</n-button>
@@ -455,7 +457,11 @@ function singleDayFromCum(cum, prevCum) {
 
 // 当前展示用列: 自建策略用B点式, 内置用原有
 const displayColumns = computed(() => activeIsCustom.value ? bpColumns : itemColumns)
-const displayRows = computed(() => activeIsCustom.value ? bpRows.value : items.value)
+const displayRows = computed(() => {
+  if (activeIsCustom.value) return bpRows.value
+  // [v9f.12] 查询结果增量叠加在默认明细之上，点清空恢复
+  return queryRows.value.length ? items.value.concat(queryRows.value) : items.value
+})
 
 const itemColumns = [
   mkCol('日期', 'tradeDate', 105),
@@ -590,6 +596,48 @@ async function doBackfill() {
   } catch(e) {
     if (window.$message) window.$message.error('补齐失败: ' + e)
   } finally { backfilling.value = false }
+}
+// [v9f.12] 日期范围查询批次：增量叠加显示，点「清空查询」恢复（多次查询结果保留）
+const querying = ref(false)
+const queryRows = ref([])
+const queryBatchIds = ref([])
+async function doQueryBatches() {
+  const fmt = (ts) => {
+    const d = new Date(ts)
+    return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0')
+  }
+  const s = fmt(backfillStart.value)
+  const e = fmt(backfillEnd.value)
+  if (s > e) { if (window.$message) window.$message.warning('开始日期不能晚于结束日期'); return }
+  const inRange = (batches.value || []).filter(b => String(b.tradeDate || '') >= s && String(b.tradeDate || '') <= e)
+  if (!inRange.length) {
+    if (window.$message) window.$message.info(`范围内无批次（${s} ~ ${e}）。可点「补齐历史」按此范围重演建批次，完成后再查询`, {duration: 8000})
+    return
+  }
+  querying.value = true
+  try {
+    const have = new Set(queryRows.value.map(r => r.id))
+    const got = []
+    for (const b of inRange) {
+      if (queryBatchIds.value.includes(b.id)) continue
+      queryBatchIds.value.push(b.id)
+      const rows = await window.go.main.App.GetBatchItems(b.id)
+      for (const r of (rows || [])) {
+        if (have.has(r.id)) continue
+        have.add(r.id)
+        got.push(Object.assign({}, r, { tradeDate: b.tradeDate }))
+      }
+    }
+    queryRows.value = queryRows.value.concat(got)
+    if (window.$message) window.$message.info(`查询到 ${inRange.length} 个批次，本次新增 ${got.length} 条明细；多次查询增量叠加，点「清空查询」恢复`, {duration: 8000})
+  } catch(err) {
+    if (window.$message) window.$message.error('查询失败: ' + err)
+  } finally { querying.value = false }
+}
+function clearQuery() {
+  queryRows.value = []
+  queryBatchIds.value = []
+  if (window.$message) window.$message.info('已清空查询结果，恢复默认列表')
 }
 function exportCSV() {
   exporting.value = true
