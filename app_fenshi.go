@@ -1133,12 +1133,12 @@ func fenshiIndexEnv() FenshiIndexEnv {
 	}
 	env.ShPct, env.SzPct, env.CybPct = sh, sz, cyb
 	env.Ok = err1 == nil && err2 == nil && err3 == nil
+	return env
 }
 
 // FenshiIndexEnvGet wails 绑定用（转发）
 func (a *App) FenshiIndexEnvGet() FenshiIndexEnv {
 	return fenshiIndexEnv()
-	return env
 }
 
 // FenshiDailyCtxGet 个股历史上下文查询
