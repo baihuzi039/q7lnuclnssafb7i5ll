@@ -518,6 +518,14 @@ function loadStrategies() {
 
 function onSwitchStrategy() {
   checkedBatches.value = []
+  // [v9f.14] 切策略时清空查询展示并加载该策略自己的查询状态（互不串批次）
+  queryRows.value = []
+  queryBatchIds.value = []
+  const q = loadQueryState()
+  queryRows.value = q.rows || []
+  queryBatchIds.value = q.batchIds || []
+  if (q.start) backfillStart.value = q.start
+  if (q.end) backfillEnd.value = q.end
   // v9c.4: 共用date-picker但各tab记住各自日期——切tab时把组件值切到该tab上次用的
   const s = strategies.value.find(x => String(x.id) === activeStrategy.value)
   if (s && /牛指/.test(s.name || '')) {
@@ -575,13 +583,15 @@ function fixNames() {
 }
 // [v9f.11] 补齐历史：用户可选日期范围（默认最近10个自然日）；范围越长耗时越久，点击后提示
 // [v9f.13] 日期范围与查询状态持久化：切模块/重启后恢复上次状态
-const LS_KEY = 'trackQueryState.v1'
+// [v9f.14] 查询状态按策略隔离：一夜/牛指各自的查询结果互不串
+const LS_KEY = 'trackQueryState.v2'
+function lsKey() { return LS_KEY + ':' + String(activeStrategy.value || '') }
 function loadQueryState() {
-  try { return JSON.parse(localStorage.getItem(LS_KEY)) || {} } catch { return {} }
+  try { return JSON.parse(localStorage.getItem(lsKey())) || {} } catch { return {} }
 }
 function saveQueryState() {
   try {
-    localStorage.setItem(LS_KEY, JSON.stringify({
+    localStorage.setItem(lsKey(), JSON.stringify({
       start: backfillStart.value, end: backfillEnd.value,
       rows: queryRows.value, batchIds: queryBatchIds.value
     }))
@@ -693,17 +703,22 @@ function delItem(row) {
 const exportingXlsx = ref(false)
 // 顶部按钮：导出当前策略最新批次（原版模板格式）
 function exportXlsxTop() {
-  if (!batches.value.length) {
-    window.$message ? window.$message.warning('当前策略没有批次，先导入或新建批次') : alert('当前策略没有批次')
-    return
-  }
-  // [v9f] 跳过空批次，取最近一个有明细的批次（避免点导出撞上空批次报"无明细"）
-  const latest = batches.value.find(b => (b.itemCount || 0) > 0 || (b.item_count || 0) > 0)
-  if (!latest) {
-    window.$message ? window.$message.warning('最近的批次均无明细数据，请先导入或新建明细') : alert('最近的批次均无明细数据')
-    return
-  }
-  exportExcel(latest)
+  // [v9f.16] 新语义：导出=打开该策略唯一的回测表文件（数据目录/策略名-回测表.xlsx），打开前自动同步全部批次
+  const sid = Number(activeStrategy.value)
+  exporting.value = true
+  window.go.main.App.OpenLatestTrackSheet(sid).then((res) => {
+    exporting.value = false
+    const msg = res || ''
+    if (msg.includes('.xlsx')) {
+      window.$message ? window.$message.success(msg, { duration: 8000 }) : alert(msg)
+    } else {
+      window.$message ? window.$message.warning(msg, { duration: 10000 }) : alert(msg)
+    }
+  }).catch((e) => {
+    exporting.value = false
+    const msg = '导出失败: ' + (e && e.message ? e.message : e)
+    window.$message ? window.$message.error(msg, { duration: 8000 }) : alert(msg)
+  })
 }
 function exportExcel(row) {
   const sid = Number(activeStrategy.value)

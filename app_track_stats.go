@@ -98,6 +98,14 @@ func FillAllTrackHoldings() {
 	}
 	if filled > 0 {
 		logger.SugaredLogger.Infof("批次涨幅回填完成，更新 %d 只", filled)
+		// [v9f.16] 回填后自动同步回测表：数据更新到哪，表就自动追到哪（幂等，无新增则不写盘）
+		for _, name := range []string{"一夜持股", "牛指T+1"} {
+			var st models.TrackStrategy
+			if err := db.Dao.Where("name = ?", name).First(&st).Error; err != nil {
+				continue
+			}
+			SyncStrategySheet(name)
+		}
 	}
 }
 
@@ -297,13 +305,14 @@ func (a *App) ExportTrackCSV(strategyID uint) string {
 	if len(batches) == 0 {
 		return "该策略暂无批次数据"
 	}
+	// [v9f.14] CSV防乱：①批次日期/代码加引号，防Excel把日期解析成内部序列值（显示####或乱序）、防代码丢前缀0
 	var sb strings.Builder
 	sb.WriteString("批次日期,代码,名称,评分,次日开盘%,次日最高%,次日收盘%,持仓3日%,持仓5日%,持仓8日%\n")
 	for _, b := range batches {
 		var items []models.TrackItem
 		db.Dao.Where("batch_id = ?", b.ID).Order("id ASC").Find(&items)
 		for _, it := range items {
-			fmt.Fprintf(&sb, "%s,%s,%s,%s,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f\n",
+			fmt.Fprintf(&sb, "\"%s\",\"%s\",%s,%s,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f\n",
 				b.TradeDate, it.StockCode, it.StockName, it.Score,
 				it.NextOpenPct, it.NextHighPct, it.NextClosePct,
 				it.Hold3Pct, it.Hold5Pct, it.Hold8Pct)

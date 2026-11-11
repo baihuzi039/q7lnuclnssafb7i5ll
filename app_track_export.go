@@ -24,11 +24,44 @@ import (
 
 // ExportTrackExcel 按原版模板导出指定批次，返回结果消息（成功=文件路径）
 // [v9f] 支持一夜/牛指两个策略；模板缺失/批次空时给明确路径提示
+// ExportTrackExcel [v9f.15] 策略内全部有明细的批次逐个导出（batchID>0 时只导指定批次，保持旧用法）
 func (a *App) ExportTrackExcel(strategyID, batchID uint) string {
 	defer PanicHandler()
 	var st models.TrackStrategy
 	if err := db.Dao.First(&st, strategyID).Error; err != nil {
 		return "策略不存在"
+	}
+	if batchID == 0 {
+		// 全批次导出：找出该策略下所有有明细的批次，逐个生成Excel
+		var allBatches []models.TrackBatch
+		db.Dao.Where("strategy_id = ?", strategyID).Order("trade_date ASC").Find(&allBatches)
+		if len(allBatches) == 0 {
+			return "该策略没有任何批次；请先用「补齐历史」或「新建批次」建批次后再导出"
+		}
+		exported, empty := 0, 0
+		var lastPath string
+		for _, b := range allBatches {
+			var cnt int64
+			db.Dao.Model(&models.TrackItem{}).Where("batch_id = ?", b.ID).Count(&cnt)
+			if cnt == 0 {
+				empty++
+				continue
+			}
+			msg := a.exportOneBatch(&st, b.ID)
+			if strings.Contains(msg, ".xlsx") {
+				exported++
+				lastPath = msg
+			} else if strings.Contains(msg, "缺少模板") {
+				return msg // 模板缺失直接返回提示
+			}
+		}
+		if exported == 0 {
+			return fmt.Sprintf("该策略共 %d 个批次，全部无明细数据，无法导出", len(allBatches))
+		}
+		if lastPath != "" {
+			openDir(filepath.Dir(lastPath))
+		}
+		return fmt.Sprintf("已导出 %d 个批次的Excel到 export 目录（%d 个空批次跳过）；最近文件: %s", exported, empty, lastPath)
 	}
 	var batch models.TrackBatch
 	if err := db.Dao.First(&batch, batchID).Error; err != nil {
@@ -38,6 +71,20 @@ func (a *App) ExportTrackExcel(strategyID, batchID uint) string {
 	db.Dao.Where("batch_id = ?", batchID).Order("id ASC").Find(&items)
 	if len(items) == 0 {
 		return "批次 " + batch.TradeDate + "（ID " + fmt.Sprint(batch.ID) + "）无明细数据，不能导出；请选有明细的批次"
+	}
+	return a.exportOneBatch(&st, batchID)
+}
+
+// exportOneBatch 导出单个批次（抽出共用）
+func (a *App) exportOneBatch(st *models.TrackStrategy, batchID uint) string {
+	var batch models.TrackBatch
+	if err := db.Dao.First(&batch, batchID).Error; err != nil {
+		return "批次不存在"
+	}
+	var items []models.TrackItem
+	db.Dao.Where("batch_id = ?", batchID).Order("id ASC").Find(&items)
+	if len(items) == 0 {
+		return "批次无明细"
 	}
 
 	tplDir := filepath.Join(filepath.Dir(db.GetDBPath()), "templates")
@@ -90,9 +137,9 @@ func AppendBatchToXlsx(strategyName string, batchID uint) string {
 	var err error
 	switch st.Name {
 	case "一夜持股":
-		err = appendYiyeInPlace(tplPath, items, batch)
+		err = appendYiyeInPlace(sheetPathFor(st.Name), items, batch)
 	case "牛指T+1":
-		err = appendNiuZhiInPlace(tplPath, items, batch)
+		err = appendNiuZhiInPlace(sheetPathFor(st.Name), items, batch)
 	default:
 		return ""
 	}
@@ -101,6 +148,50 @@ func AppendBatchToXlsx(strategyName string, batchID uint) string {
 		return st.Name + " 回测表追加失败: " + err.Error()
 	}
 	return st.Name + " 回测表已追加 " + batch.TradeDate + "（" + fmt.Sprint(len(items)) + "只）"
+}
+
+// SyncStrategySheet [v9f.16] 把该策略所有有明细的批次幂等追加进模板副本（副本才是工作表，模板永不被写）
+// 返回工作表路径；出错返回错误说明
+func SyncStrategySheet(strategyName string) string {
+	var st models.TrackStrategy
+	if err := db.Dao.Where("name = ?", strategyName).First(&st).Error; err != nil {
+		return ""
+	}
+	var batches []models.TrackBatch
+	db.Dao.Where("strategy_id = ?", st.ID).Order("trade_date ASC, id ASC").Find(&batches)
+	for _, b := range batches {
+		AppendBatchToXlsx(strategyName, b.ID) // 幂等，已存在自动跳过
+	}
+	// 工作表路径：数据目录下固定名（模板副本首次追加时由 appendXxxInPlace 生成）
+	return filepath.Join(filepath.Dir(db.GetDBPath()), st.Name+"-回测表.xlsx")
+}
+
+// OpenLatestTrackSheet [v9f.16] 导出Excel新语义：同步全部批次→打开该策略唯一的回测表文件
+func (a *App) OpenLatestTrackSheet(strategyID uint) string {
+	defer PanicHandler()
+	var st models.TrackStrategy
+	if err := db.Dao.First(&st, strategyID).Error; err != nil {
+		return "策略不存在"
+	}
+	tplPath := filepath.Join(filepath.Dir(db.GetDBPath()), "templates", st.Name+".xlsx")
+	if _, err := os.Stat(tplPath); err != nil {
+		return "缺少模板文件: " + tplPath + "（请把原版Excel改名为「" + st.Name + ".xlsx」放入 templates 目录后重试）"
+	}
+	var cnt int64
+	db.Dao.Model(&models.TrackBatch{}).Where("strategy_id = ?", strategyID).Count(&cnt)
+	if cnt == 0 {
+		return "该策略还没有批次；先用「补齐历史」或「新建批次」建批次后，回测表会自动生成"
+	}
+	if msg := SyncStrategySheet(st.Name); msg != "" && !strings.Contains(msg, ".xlsx") {
+		// SyncStrategySheet 本身不报错，此处防御
+		_ = msg
+	}
+	sheetPath := filepath.Join(filepath.Dir(db.GetDBPath()), st.Name+"-回测表.xlsx")
+	if _, err := os.Stat(sheetPath); err != nil {
+		return "回测表尚未生成（批次无明细或追加失败），请查看日志 logs/wails.log"
+	}
+	openDir(filepath.Dir(sheetPath))
+	return sheetPath
 }
 
 // AutoAppendTrackXlsx [v9f] 收盘后自动任务用：把当日已建的两个批次（如存在且有明细）追加进各自模板
@@ -122,6 +213,26 @@ func AutoAppendTrackXlsx(day string) string {
 	return strings.Join(msgs, "；")
 }
 
+// sheetPathFor [v9f.16] 策略工作表固定路径：数据目录/策略名-回测表.xlsx（首次由模板复制生成）
+func sheetPathFor(strategyName string) string {
+	sheet := filepath.Join(filepath.Dir(db.GetDBPath()), strategyName+"-回测表.xlsx")
+	if _, err := os.Stat(sheet); err != nil {
+		tpl := filepath.Join(filepath.Dir(db.GetDBPath()), "templates", strategyName+".xlsx")
+		if data, e := os.ReadFile(tpl); e == nil {
+			_ = os.WriteFile(sheet, data, 0644) // 首次：模板副本作为工作表
+		}
+	}
+	return sheet
+}
+
+// openOrCreateSheet 打开工作表（不存在时从模板复制）；返回打不开的错误
+func openOrCreateSheet(sheetPath string) (*excelize.File, error) {
+	if _, err := os.Stat(sheetPath); err != nil {
+		return nil, fmt.Errorf("回测表不存在且无法从模板创建: %s", sheetPath)
+	}
+	return excelize.OpenFile(sheetPath)
+}
+
 // batchExistsInSheet 幂等检查：A列是否已有 tradeDate 且同行B列为该代码
 func batchExistsInSheet(f *excelize.File, sheet, tradeDate, code6 string) bool {
 	rows, err := f.GetRows(sheet)
@@ -137,10 +248,10 @@ func batchExistsInSheet(f *excelize.File, sheet, tradeDate, code6 string) bool {
 }
 
 // appendYiyeInPlace [v9f] 一夜：直接在模板文件内追加（不复制副本）
-func appendYiyeInPlace(tplPath string, items []models.TrackItem, batch models.TrackBatch) error {
-	f, err := excelize.OpenFile(tplPath)
+func appendYiyeInPlace(sheetPath string, items []models.TrackItem, batch models.TrackBatch) error {
+	f, err := openOrCreateSheet(sheetPath)
 	if err != nil {
-		return fmt.Errorf("模板打开失败: %w", err)
+		return fmt.Errorf("回测表打开失败: %w", err)
 	}
 	defer f.Close()
 	const sheet = "五年明细"
@@ -187,7 +298,7 @@ func appendYiyeInPlace(tplPath string, items []models.TrackItem, batch models.Tr
 		return nil // 幂等：全部已存在
 	}
 	copyRowStyles(f, sheet, srcRow, srcRow+1, start-1, 15)
-	return f.Save()
+	return f.SaveAs(sheetPath)
 }
 
 // appendStartRow 追加起始行 = A列最后一个非空行+1；srcRow=最后一条数据行（样式源）
@@ -210,10 +321,10 @@ func appendStartRow(f *excelize.File, sheet string, colA int) (start, srcRow int
 
 // appendNiuZhiInPlace [v9f] 牛指：追加到「近五年回测明细」sheet
 // 列(18): A信号日 B代码 C名称 D星级 E买入价 F次日 G次日开盘 H开盘卖收益% I次日最高 J最高卖收益% K次日收盘 L收盘卖收益% M买入日涨停 N次日跌停
-func appendNiuZhiInPlace(tplPath string, items []models.TrackItem, batch models.TrackBatch) error {
-	f, err := excelize.OpenFile(tplPath)
+func appendNiuZhiInPlace(sheetPath string, items []models.TrackItem, batch models.TrackBatch) error {
+	f, err := openOrCreateSheet(sheetPath)
 	if err != nil {
-		return fmt.Errorf("模板打开失败: %w", err)
+		return fmt.Errorf("回测表打开失败: %w", err)
 	}
 	defer f.Close()
 	const sheet = "近五年回测明细"
@@ -267,7 +378,7 @@ func appendNiuZhiInPlace(tplPath string, items []models.TrackItem, batch models.
 		return nil
 	}
 	copyRowStyles(f, sheet, srcRow, srcRow+1, start-1, 18)
-	return f.Save()
+	return f.SaveAs(sheetPath)
 }
 
 // exportNiuZhi [v9f] 牛指：复制模板→追加→另存（手动导出走副本，不污染模板）
