@@ -1002,3 +1002,126 @@ func fenshiAnalyzeFromSina(stockCode string) (*FenshiAnalysisResult, error) {
 	res.Advice = fmt.Sprintf("[新浪源·5分钟级] %s 昨收%.2f 今开%.2f 现价%.2f（分钟粒度较粗、量比不可用，趋势判断仍有效）", tcode, preClose, openPx, nowPx)
 	return res, nil
 }
+
+// ==================== v9f.21 数据层扩展：指数环境 + 多周期历史 ====================
+
+// FenshiIndexEnv 大盘环境：上证/深成/创业板 实时涨跌
+type FenshiIndexEnv struct {
+	ShPct float64 `json:"shPct"`
+	SzPct float64 `json:"szPct"`
+	CybPct float64 `json:"cybPct"`
+	Ok    bool    `json:"ok"`
+}
+
+// FenshiDailyCtx 个股多周期历史上下文
+type FenshiDailyCtx struct {
+	PrevClose float64 `json:"prevClose"` // 昨收
+	PrevHigh  float64 `json:"prevHigh"`  // 昨高
+	PrevLow   float64 `json:"prevLow"`   // 昨低
+	MA5       float64 `json:"ma5"`
+	MA10      float64 `json:"ma10"`
+	MA20      float64 `json:"ma20"`
+	Ok        bool    `json:"ok"`
+}
+
+// fenshiIndexPct 腾讯快照取指数涨跌幅（qt.gtimg.cn，用户机器实测可用）
+func fenshiIndexPct(tcode string) (float64, error) {
+	snapURL := fmt.Sprintf("https://qt.gtimg.cn/q=%s", tcode)
+	req, _ := http.NewRequest("GET", snapURL, nil)
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
+	resp, err := fenshiPlainClient.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, err
+	}
+	s := stockdata.GB18030ToUTF8(body)
+	i := strings.Index(string(s), "\"")
+	if i < 0 {
+		return 0, fmt.Errorf("指数快照无引号体")
+	}
+	parts := strings.Split(string(s)[i+1:strings.LastIndex(string(s), "\"")], "~")
+	if len(parts) < 5 {
+		return 0, fmt.Errorf("指数快照字段不足")
+	}
+	now, _ := strconv.ParseFloat(parts[3], 64)
+	pc, _ := strconv.ParseFloat(parts[4], 64)
+	if pc <= 0 {
+		return 0, fmt.Errorf("指数昨收异常")
+	}
+	return (now - pc) / pc * 100, nil
+}
+
+// fenshiDailyCtx 腾讯日K取昨高三低收 + MA5/10/20（web.ifzq.gtimg.cn，用户机器实测可用）
+func fenshiDailyCtx(tcode string) FenshiDailyCtx {
+	ctx := FenshiDailyCtx{}
+	kURL := fmt.Sprintf("https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param=%s,day,,,26,qfq", tcode)
+	m, err := fenshiGet(kURL)
+	if err != nil {
+		logger.SugaredLogger.Warnf("fenshiDailyCtx 拉取失败 %s: %v", tcode, err)
+		return ctx
+	}
+	dm, _ := m["data"].(map[string]any)
+	sm, _ := dm[tcode].(map[string]any)
+	// qfqday（前复权）或 day 两种 key 兼容
+	rows, _ := sm["qfqday"].([]any)
+	if rows == nil {
+		rows, _ = sm["day"].([]any)
+	}
+	if len(rows) < 21 {
+		return ctx
+	}
+	getF := func(row []any, i int) float64 {
+		if i >= len(row) {
+			return 0
+		}
+		v, _ := strconv.ParseFloat(fmt.Sprint(row[i]), 64)
+		return v
+	}
+	prev, _ := rows[len(rows)-2].([]any)
+	ctx.PrevClose = getF(prev, 2)
+	ctx.PrevHigh = getF(prev, 3)
+	ctx.PrevLow = getF(prev, 4)
+	var closes []float64
+	for _, r := range rows {
+		row, _ := r.([]any)
+		closes = append(closes, getF(row, 2))
+	}
+	n := len(closes)
+	sum := func(k int) float64 {
+		s := 0.0
+		for _, v := range closes[n-k:] {
+			s += v
+		}
+		return s / float64(k)
+	}
+	ctx.MA5, ctx.MA10, ctx.MA20 = sum(5), sum(10), sum(20)
+	ctx.Ok = ctx.PrevClose > 0
+	return ctx
+}
+
+// FenshiIndexEnvGet 大盘环境查询（前端/规则引擎用）
+func (a *App) FenshiIndexEnvGet() FenshiIndexEnv {
+	env := FenshiIndexEnv{}
+	sh, err1 := fenshiIndexPct("sh000001")
+	sz, err2 := fenshiIndexPct("sz399001")
+	cyb, err3 := fenshiIndexPct("sz399006")
+	if err1 != nil {
+		logger.SugaredLogger.Warnf("大盘环境: 上证 %v", err1)
+	}
+	env.ShPct, env.SzPct, env.CybPct = sh, sz, cyb
+	env.Ok = err1 == nil && err2 == nil && err3 == nil
+	return env
+}
+
+// FenshiDailyCtxGet 个股历史上下文查询
+func (a *App) FenshiDailyCtxGet(stockCode string) FenshiDailyCtx {
+	code, ok := fenshiTencentCode(stockCode)
+	if !ok {
+		return FenshiDailyCtx{}
+	}
+	return fenshiDailyCtx(code)
+}

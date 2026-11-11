@@ -1793,3 +1793,11 @@ export function FenshiHotBoards() {
 export function FenshiNowTime() {
   return window['go']['main']['App']['FenshiNowTime']();
 }
+
+export function FenshiIndexEnvGet() {
+  return window['go']['main']['App']['FenshiIndexEnvGet']();
+}
+
+export function FenshiDailyCtxGet(arg1) {
+  return window['go']['main']['App']['FenshiDailyCtxGet'](arg1);
+}
