@@ -45,31 +45,29 @@ func fenshiRunRules(in fenshiRuleIn) FenshiAdvice {
 	score := 0.0
 	var reasons []string
 
+	// v9f.23.1：评分透明化——同时累计正负分项，末尾展示合计
+	posSum, negSum := 0.0, 0.0
+	add := func(s float64, why string) {
+		score += s
+		if s > 0 {
+			posSum += s
+		} else if s < 0 {
+			negSum += -s
+		}
+		if why != "" {
+			reasons = append(reasons, why)
+		}
+	}
 	s, why := fenshiRuleVwap(in.Trend)
-	score += s
-	if why != "" {
-		reasons = append(reasons, why)
-	}
+	add(s, why)
 	s, why = fenshiRuleDivergence(in.Trend)
-	score += s
-	if why != "" {
-		reasons = append(reasons, why)
-	}
+	add(s, why)
 	s, why = fenshiRuleTimePoint(in.Now, in.Trend)
-	score += s
-	if why != "" {
-		reasons = append(reasons, why)
-	}
+	add(s, why)
 	s, why = fenshiRuleSR(in)
-	score += s
-	if why != "" {
-		reasons = append(reasons, why)
-	}
+	add(s, why)
 	s, why = fenshiRuleMarket(in)
-	score += s
-	if why != "" {
-		reasons = append(reasons, why)
-	}
+	add(s, why)
 
 	if score > 100 {
 		score = 100
@@ -86,7 +84,8 @@ func fenshiRunRules(in fenshiRuleIn) FenshiAdvice {
 	default:
 		adv.Bias = "观望"
 	}
-	adv.Reasons = reasons
+	// v9f.23.1：末尾追加分项合计，让分数可溯源
+	adv.Reasons = append(reasons, fmt.Sprintf("评分构成：多方项合计+%g，空方项合计-%g，净值%g", posSum, negSum, score))
 	return adv
 }
 

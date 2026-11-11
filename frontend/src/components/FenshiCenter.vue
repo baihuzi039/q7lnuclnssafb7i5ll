@@ -99,7 +99,7 @@
           <div v-if="result.adviceV2" class="advice-v2" :class="result.adviceV2.bias === '偏多' ? 'long' : (result.adviceV2.bias === '偏空' ? 'short' : 'flat')">
             <div class="adv-head">
               <span class="adv-bias">【实时建议】{{ result.adviceV2.bias }}</span>
-              <span class="adv-score">参考度 {{ Math.abs(Math.round(result.adviceV2.score)) }}%</span>
+              <span class="adv-score">多空强度 {{ result.adviceV2.score > 0 ? '+' : '' }}{{ Math.round(result.adviceV2.score) }}（+看多 -看空，0 为中性）</span>
             </div>
             <div v-for="(rs, ri) in result.adviceV2.reasons" :key="ri" class="adv-reason">{{ rs }}</div>
           </div>
@@ -514,7 +514,7 @@ function onChartDblClick() {
 .title-name { font-size: 26px; font-weight: 800; color: #f5c542; letter-spacing: 2px; text-shadow: 0 0 10px rgba(245,197,66,.35); }
 .title-code { font-size: 17px; font-weight: 700; color: #7eb8ff; }
 .quote-line { justify-self: end; text-align: right; font-size: 12px; line-height: 1.5; }
-.quote-line .dim { margin-left: 0; }
+.quote-line .dim { margin-left: 0; color: #d1e7ff; }
 .quote-line .price { font-size: 18px; font-weight: bold; margin-right: 6px; }
 .up { color: #e04b4b; }
 .down { color: #22a45d; }
@@ -541,14 +541,14 @@ function onChartDblClick() {
 /* v9f.20.4：背景改纯黑与图表区一致 */
 .advice-box { background: #111; color: #d1e7ff; padding: 8px 10px; border-radius: 4px; margin: 8px 0; font-size: 13px; }
 /* v9f.22：规则引擎建议卡片 */
-.advice-v2 { background: #111; border-radius: 4px; margin-bottom: 8px; padding: 10px 12px; border-left: 3px solid #888; }
+.advice-v2 { background: #111; border-radius: 4px; margin-bottom: 8px; padding: 10px 12px; border-left: 3px solid #888; overflow: hidden; }
 .advice-v2.long { border-left-color: #e04b4b; }
 .advice-v2.short { border-left-color: #22a45d; }
-.adv-head { display: flex; justify-content: space-between; margin-bottom: 6px; }
-.adv-bias { font-size: 16px; font-weight: 700; }
+.adv-head { display: flex; justify-content: space-between; margin-bottom: 6px; gap: 8px; flex-wrap: wrap; }
+.adv-bias { font-size: 16px; font-weight: 700; flex-shrink: 0; }
 .advice-v2.long .adv-bias { color: #ff6b6b; }
 .advice-v2.short .adv-bias { color: #4ade80; }
 .advice-v2.flat .adv-bias { color: #d1d5db; }
-.adv-score { color: #888; font-size: 12px; }
-.adv-reason { color: #c8d6e5; font-size: 13px; line-height: 1.7; }
+.adv-score { color: #d1e7ff; font-size: 12px; }
+.adv-reason { color: #c8d6e5; font-size: 13px; line-height: 1.7; word-break: break-all; white-space: normal; }
 </style>
