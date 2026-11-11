@@ -37,9 +37,11 @@
               <span class="title-code">（{{ stripPrefix(result.code) }}）</span>
             </div>
             <div class="quote-line">
-              <span class="price" :class="result.changePct >= 0 ? 'up' : 'down'">{{ result.price.toFixed(2) }}</span>
-              <span :class="result.changePct >= 0 ? 'up' : 'down'"> {{ result.changePct.toFixed(2) }}%</span>
-              <span class="dim">高开 {{ result.gapPct.toFixed(2) }}% · 量比 {{ result.volumeRate.toFixed(2) }} · 均价 {{ result.avgPrice.toFixed(2) }}（{{ result.aboveVwapP >= 0 ? '+' : '' }}{{ result.aboveVwapP.toFixed(2) }}%）· 15分钟动量 {{ result.mom15.toFixed(2) }}%</span>
+              <div class="live-price-row">
+                <span class="live-price" :class="result.changePct >= 0 ? 'up' : 'down'" :key="result.price">{{ result.price.toFixed(2) }}</span>
+                <span class="live-pct" :class="result.changePct >= 0 ? 'up' : 'down'" :key="result.changePct">{{ result.changePct >= 0 ? '+' : '' }}{{ result.changePct.toFixed(2) }}%</span>
+              </div>
+              <div class="dim">高开 {{ result.gapPct.toFixed(2) }}% · 量比 {{ result.volumeRate.toFixed(2) }} · 均价 {{ result.avgPrice.toFixed(2) }}（{{ result.aboveVwapP >= 0 ? '+' : '' }}{{ result.aboveVwapP.toFixed(2) }}%）· 15分钟动量 {{ result.mom15.toFixed(2) }}%</div>
             </div>
           </div>
 
@@ -78,13 +80,13 @@
                 <line :x1="cross.x" :x2="cross.x" :y1="CH.y0" :y2="CH.y1" class="cross-line" />
                 <line :x1="CH.x0" :x2="CH.x1" :y1="cross.y" :y2="cross.y" class="cross-line" />
                 <circle :cx="cross.x" :cy="cross.y" r="3" fill="#fff" />
-                <!-- 数据提示框 -->
+                <!-- 数据提示框（v9f.23.2：价/幅红涨绿跌） -->
                 <g v-if="crossInfo">
-                  <rect :x="tipX" :y="CH.y0 + 4" width="150" height="72" rx="4" class="tip-rect" />
+                  <rect :x="tipX" :y="CH.y0 + 4" width="150" height="88" rx="4" class="tip-rect" />
                   <text :x="tipX + 10" :y="CH.y0 + 24" class="tip-text strong">{{ crossInfo.time }}</text>
-                  <text :x="tipX + 10" :y="CH.y0 + 42" class="tip-text">{{ crossInfo.price }}</text>
+                  <text :x="tipX + 10" :y="CH.y0 + 42" class="tip-text" :fill="crossInfo.priceColor">{{ crossInfo.price }}</text>
                   <text :x="tipX + 10" :y="CH.y0 + 58" class="tip-text">{{ crossInfo.avg }}</text>
-                  <text :x="tipX + 10" :y="CH.y0 + 72" class="tip-text" :fill="crossInfo.pctColor">{{ crossInfo.pct }}</text>
+                  <text :x="tipX + 10" :y="CH.y0 + 74" class="tip-text" :fill="crossInfo.pctColor">{{ crossInfo.pctStr }}</text>
                 </g>
               </g>
               <!-- 图例 -->
@@ -453,12 +455,14 @@ function buildCross(idx) {
   const y = yOf(t.now, min, max);
   cross.value = { x, y };
   const pct = r.prevClose > 0 ? ((t.now - r.prevClose) / r.prevClose) * 100 : 0;
+  // v9f.23.2：浮框价格与涨跌幅红涨绿跌（随鼠标位置实时变换）
   crossInfo.value = {
     time: String(t.time || ""),
-    price: `价 ${t.now.toFixed(2)}  均 ${(t.avg || 0).toFixed(2)}`,
-    avg: `幅 ${(pct >= 0 ? "+" : "") + pct.toFixed(2)}%`,
-    pct: "",
-    pctColor: "#999",
+    price: `价 ${t.now.toFixed(2)}`,
+    priceColor: pct >= 0 ? "#e04b4b" : "#22a45d",
+    avg: `均 ${(t.avg || 0).toFixed(2)}`,
+    pctStr: `幅 ${(pct >= 0 ? "+" : "") + pct.toFixed(2)}%`,
+    pctColor: pct >= 0 ? "#e04b4b" : "#22a45d",
   };
 }
 
@@ -514,8 +518,19 @@ function onChartDblClick() {
 .title-name { font-size: 26px; font-weight: 800; color: #f5c542; letter-spacing: 2px; text-shadow: 0 0 10px rgba(245,197,66,.35); }
 .title-code { font-size: 17px; font-weight: 700; color: #7eb8ff; }
 .quote-line { justify-self: end; text-align: right; font-size: 12px; line-height: 1.5; }
-.quote-line .dim { margin-left: 0; color: #d1e7ff; }
-.quote-line .price { font-size: 18px; font-weight: bold; margin-right: 6px; }
+.quote-line .dim { margin-left: 0; color: #d1e7ff; display: block; }
+/* v9f.23.2：实时价格通达信化——昨收0%红涨绿跌，与名称同字号，变动轻微闪烁 */
+.live-price-row { display: flex; justify-content: flex-end; align-items: baseline; gap: 8px; }
+.live-price { font-size: 26px; font-weight: bold; font-family: "Microsoft YaHei", "SimHei", sans-serif; }
+.live-pct { font-size: 26px; font-weight: bold; font-family: "Microsoft YaHei", "SimHei", sans-serif; }
+@keyframes price-blink {
+  0% { opacity: 1; }
+  50% { opacity: 0.55; }
+  100% { opacity: 1; }
+}
+.live-price, .live-pct { animation: price-blink 0.5s ease-in-out 1; }
+/* 数据刷新时重触发闪烁（key 变化重建元素） */
+.live-price { transition: color 0.2s; }
 .up { color: #e04b4b; }
 .down { color: #22a45d; }
 .dim { color: #888; font-size: 12px; margin-left: 8px; }
@@ -544,11 +559,19 @@ function onChartDblClick() {
 .advice-v2 { background: #111; border-radius: 4px; margin-bottom: 8px; padding: 10px 12px; border-left: 3px solid #888; overflow: hidden; }
 .advice-v2.long { border-left-color: #e04b4b; }
 .advice-v2.short { border-left-color: #22a45d; }
-.adv-head { display: flex; justify-content: space-between; margin-bottom: 6px; gap: 8px; flex-wrap: wrap; }
+.adv-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; gap: 8px; }
+.adv-head > span:first-child { flex-shrink: 0; }
 .adv-bias { font-size: 16px; font-weight: 700; flex-shrink: 0; }
+.advice-v2 .adv-score { flex-shrink: 1; min-width: 0; text-align: right; word-break: break-all; }
 .advice-v2.long .adv-bias { color: #ff6b6b; }
 .advice-v2.short .adv-bias { color: #4ade80; }
 .advice-v2.flat .adv-bias { color: #d1d5db; }
-.adv-score { color: #d1e7ff; font-size: 12px; }
-.adv-reason { color: #c8d6e5; font-size: 13px; line-height: 1.7; word-break: break-all; white-space: normal; }
+.adv-score { color: #d1e7ff; font-size: 12px; word-break: break-all; }
+.adv-reason { color: #c8d6e5; font-size: 13px; line-height: 1.7; word-break: break-all; white-space: normal; margin-right: 0; }
+/* v9f.23.2：卡片内文字限制在容器内，不再横向溢出 */
+.advice-v2, .advice-v2 * { max-width: 100%; box-sizing: border-box; overflow-wrap: anywhere; }
+.adv-head, .adv-reason { overflow: hidden; }
+.adv-reason { padding-right: 8px; }
+/* 浮框内多空强度文字不溢出 */
+.adv-head { width: 100%; }
 </style>
