@@ -15,6 +15,16 @@
 
       <!-- 右侧：大分时图 -->
       <div class="right-pane">
+        <!-- v9f.23：竞价分析卡片（09:15-09:25 采集，独立于盘中建议） -->
+        <n-card size="small" v-if="auctionAdv" class="mb12">
+          <div class="advice-v2" :class="auctionAdv.bias === '偏多' ? 'long' : (auctionAdv.bias === '偏空' ? 'short' : 'flat')">
+            <div class="adv-head">
+              <span class="adv-bias">【竞价分析】{{ auctionAdv.bias }}</span>
+              <span class="adv-score">高开 {{ auctionAdv.gapPct.toFixed(2) }}% · 竞价量 {{ auctionAdv.volRatio.toFixed(1) }}‰</span>
+            </div>
+            <div v-for="(rs, ri) in auctionAdv.reasons" :key="ri" class="adv-reason">{{ rs }}</div>
+          </div>
+        </n-card>
         <n-card size="small" v-if="result" class="mb12 chart-card">
           <!-- v9f.20.3：三栏 grid，物理隔离互不重叠：时钟左 | 名称中 | 行情右 -->
           <div class="top-row">
@@ -111,7 +121,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, h } from "vue";
 import { NCard, NButton, NDataTable, NTag, NInput, NSpace, NEmpty, NAlert } from "naive-ui";
-import { FenshiWatchlist, FenshiWatchlistAdd, FenshiWatchlistRemove, FenshiAnalyzeStock, FenshiNowTime } from "../../wailsjs/go/main/App";
+import { FenshiWatchlist, FenshiWatchlistAdd, FenshiWatchlistRemove, FenshiAnalyzeStock, FenshiNowTime, FenshiAuctionSnap, FenshiAuctionEval, FenshiDailyCtxGet } from "../../wailsjs/go/main/App";
 
 const watchlist = ref([]);
 const result = ref(null);
@@ -181,8 +191,12 @@ async function removeStock(code) {
 onMounted(() => {
   loadWatchlist();
   startClock();
+  auctionTimer = setInterval(auctionPoll, 15000);
 });
-onUnmounted(stopClock);
+onUnmounted(() => {
+  stopClock();
+  if (auctionTimer) clearInterval(auctionTimer);
+});
 
 async function analyze(code) {
   analyzing.value = true;
@@ -205,6 +219,52 @@ async function analyze(code) {
   } finally {
     analyzing.value = false;
   }
+}
+
+// ==================== 竞价分析（v9f.23） ====================
+// 09:15-09:25 每 15s 采样一次腾讯快照；09:26 后汇总评分一次
+// 采集目标：当前分析过的股票，无则取自选股第一只
+const auctionPts = ref([]);
+const auctionAdv = ref(null);
+let auctionTimer = null;
+let auctionDoneDate = ""; // 当日已评分标记，防止重复评分
+
+function auctionActiveCode() {
+  if (result.value && result.value.code) return result.value.code;
+  if (watchlist.value && watchlist.value.length > 0) return watchlist.value[0].code;
+  return "";
+}
+
+async function auctionPoll() {
+  if (auctionAdv.value) return; // 当日已出结论，停止采集
+  const now = new Date(Date.now() + clockOffset);
+  const day = now.getDay();
+  if (day === 0 || day === 6) return;
+  const hm = now.getHours() * 100 + now.getMinutes();
+  if (hm < 915 || hm > 926) return;
+  const code = auctionActiveCode();
+  if (!code) return;
+  try {
+    const snap = await FenshiAuctionSnap(code);
+    if (!snap || !snap.inWindow || snap.price <= 0) return;
+    const pts = auctionPts.value;
+    const last = pts.length ? pts[pts.length - 1] : null;
+    if (last && last.mins === snap.mins) return; // 同一分钟去重
+    pts.push({ mins: snap.mins, price: snap.price, vol: snap.vol });
+    if (pts.length > 60) pts.shift();
+    if (hm >= 926 && pts.length >= 2) await auctionEvaluate(code);
+  } catch (e) { /* 竞价期网络抖动忽略，下一轮重试 */ }
+}
+
+async function auctionEvaluate(code) {
+  const day = new Date().toDateString();
+  if (auctionDoneDate === day) return;
+  auctionDoneDate = day;
+  try {
+    const dctx = await FenshiDailyCtxGet(code);
+    const adv = await FenshiAuctionEval(auctionPts.value, dctx.prevClose, dctx.prevVol);
+    if (adv) auctionAdv.value = adv;
+  } catch (e) { /* 评分失败不影响主流程 */ }
 }
 
 // ==================== 大时钟（v9f.20） ====================

@@ -903,3 +903,7 @@ export function FenshiHotBoards(): Promise<Array<any>>;
 export function FenshiNowTime(): Promise<bigint>;
 export function FenshiIndexEnvGet(): Promise<go.main.App.FenshiIndexEnv>;
 export function FenshiDailyCtxGet(arg1: string): Promise<go.main.App.FenshiDailyCtx>;
+
+export function FenshiAuctionSnap(arg1:string): Promise<go.main.App.FenshiAuctionSnapResult>;
+
+export function FenshiAuctionEval(arg1:Array<go.main.App.FenshiAuctionPoint>,arg2:number,arg3:number): Promise<go.main.App.FenshiAuctionAdvice>;

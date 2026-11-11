@@ -1801,3 +1801,11 @@ export function FenshiIndexEnvGet() {
 export function FenshiDailyCtxGet(arg1) {
   return window['go']['main']['App']['FenshiDailyCtxGet'](arg1);
 }
+
+export function FenshiAuctionSnap(arg1) {
+  return window['go']['main']['App']['FenshiAuctionSnap'](arg1);
+}
+
+export function FenshiAuctionEval(arg1, arg2, arg3) {
+  return window['go']['main']['App']['FenshiAuctionEval'](arg1, arg2, arg3);
+}

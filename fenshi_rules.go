@@ -30,6 +30,8 @@ type fenshiRuleIn struct {
 	MA5       float64
 	MA20      float64
 	ShPct     float64
+	SzPct     float64 // v9f.23：深成指涨跌%
+	CybPct    float64 // v9f.23：创业板指涨跌%
 	Now       time.Time
 }
 
@@ -53,7 +55,7 @@ func fenshiRunRules(in fenshiRuleIn) FenshiAdvice {
 	if why != "" {
 		reasons = append(reasons, why)
 	}
-	s, why = fenshiRuleTimePoint(in.Now)
+	s, why = fenshiRuleTimePoint(in.Now, in.Trend)
 	score += s
 	if why != "" {
 		reasons = append(reasons, why)
@@ -185,16 +187,21 @@ func fenshiRuleDivergence(t []FenshiTick) (float64, string) {
 	return 0, ""
 }
 
-// fenshiRuleTimePoint 时间点规律（做T秘诀六时间点）
-func fenshiRuleTimePoint(now time.Time) (float64, string) {
+// fenshiRuleTimePoint 时间点规律
+// v9f.23 修正（资料时效性评估：做T秘诀为中期资料，统计性经验降权）：
+// 分值 ±5~8 → ±3~5；正向分需量能配合（当前处于放量突破状态才给分）
+func fenshiRuleTimePoint(now time.Time, trend []FenshiTick) (float64, string) {
 	hm := now.Hour()*100 + now.Minute()
 	switch {
 	case hm >= 950 && hm <= 1010:
-		return -5, "09:50-10:10 易出短期高点（高抛窗口），追高易挂"
+		return -3, "09:50-10:10 历史上易出短期高点，追高需留意量能"
 	case hm >= 1010 && hm <= 1040:
-		return 5, "10:10-10:40 为主力进场时段，放量拉升可信度较高"
+		if fenshiVolBreak(trend) {
+			return 3, "10:10-10:40 主力进场时段，且当前放量拉升，可信度较高"
+		}
+		return 0, ""
 	case hm >= 1105 && hm <= 1115:
-		return -8, "11:10 附近急拉勿追（易中招），除非市场极强"
+		return -3, "11:10 附近急拉历史上易中招，勿盲目追"
 	case hm >= 1430 && hm <= 1450:
 		return 0, "14:30 后进入变盘窗口，注意量能方向"
 	}
@@ -216,13 +223,128 @@ func fenshiRuleSR(in fenshiRuleIn) (float64, string) {
 	return 0, ""
 }
 
-// fenshiRuleMarket 大盘共振
+// fenshiRuleMarket 大盘共振（v9f.23 修正：三指数同向/分化判定，取代仅看上证）
 func fenshiRuleMarket(in fenshiRuleIn) (float64, string) {
+	allUp := in.ShPct > 0.3 && in.SzPct > 0.3 && in.CybPct > 0.3
+	allDn := in.ShPct < -0.3 && in.SzPct < -0.3 && in.CybPct < -0.3
 	switch {
-	case in.ShPct > 0.5:
-		return 6, fmt.Sprintf("大盘走强（上证+%.2f%%），环境偏多", in.ShPct)
-	case in.ShPct < -0.5:
-		return -6, fmt.Sprintf("大盘走弱（上证%.2f%%），环境偏空", in.ShPct)
+	case allUp:
+		return 8, fmt.Sprintf("三大指数同向走强（沪+%.2f%% 深+%.2f%% 创+%.2f%%），环境偏多", in.ShPct, in.SzPct, in.CybPct)
+	case allDn:
+		return -8, fmt.Sprintf("三大指数同向走弱（沪%.2f%% 深%.2f%% 创%.2f%%），环境偏空", in.ShPct, in.SzPct, in.CybPct)
+	}
+	// 分化：主板与创业板方向相反，按强弱差给小幅倾向
+	if (in.ShPct > 0.3 && in.CybPct < -0.3) || (in.ShPct < -0.3 && in.CybPct > 0.3) {
+		s := (in.ShPct - in.CybPct) / 2
+		if s > 3 {
+			s = 3
+		}
+		if s < -3 {
+			s = -3
+		}
+		why := ""
+		if s > 0 {
+			why = fmt.Sprintf("市场分化（沪+%.2f%% / 创%.2f%%），主板偏强", in.ShPct, in.CybPct)
+		} else {
+			why = fmt.Sprintf("市场分化（沪%.2f%% / 创+%.2f%%），成长偏强", in.ShPct, in.CybPct)
+		}
+		return s, why
 	}
 	return 0, ""
+}
+
+// ==================== v9f.23 竞价分析（09:15-09:25） ====================
+// FenshiAuctionPoint 竞价采样点（Mins: 距 09:15 的分钟数 0-9）
+type FenshiAuctionPoint struct {
+	Mins  int     `json:"mins"`
+	Price float64 `json:"price"`
+	Vol   float64 `json:"vol"`
+}
+
+// FenshiAuctionAdvice 竞价评分结论
+// 来源：竞价短线王系列（2025-07，时效性高）提炼：
+//   - 高开 2~5% 且竞价量充足 = 强势承接；高开过多(>5%)谨防诱多
+//   - 低开放量 = 抛压大；9:20 后（不可撤单阶段）价格抬升/下压才可信
+//   - 竞价量占比 = 竞价成交量 / 昨日全天成交量
+type FenshiAuctionAdvice struct {
+	Bias     string   `json:"bias"`
+	Score    float64  `json:"score"`
+	Reasons  []string `json:"reasons"`
+	GapPct   float64  `json:"gapPct"`   // 竞价高开%
+	VolRatio float64  `json:"volRatio"` // 竞价量占昨日量 ‰
+}
+
+// fenshiAuctionEval 竞价评分纯函数（便于独立程序验证）
+func fenshiAuctionEval(samples []FenshiAuctionPoint, prevClose, prevVol float64) FenshiAuctionAdvice {
+	adv := FenshiAuctionAdvice{Bias: "观望"}
+	if prevClose <= 0 || len(samples) == 0 {
+		adv.Reasons = append(adv.Reasons, "竞价数据不足")
+		return adv
+	}
+	last := samples[len(samples)-1]
+	adv.GapPct = (last.Price - prevClose) / prevClose * 100
+	if prevVol > 0 {
+		adv.VolRatio = last.Vol / prevVol * 1000 // ‰
+	}
+	score := 0.0
+
+	// 1. 高开幅度 × 量能
+	switch {
+	case adv.GapPct >= 2 && adv.GapPct <= 5 && adv.VolRatio >= 3:
+		score += 15
+		adv.Reasons = append(adv.Reasons, fmt.Sprintf("温和高开 %.2f%% 且竞价量充足（占昨日 %.1f‰），承接强", adv.GapPct, adv.VolRatio))
+	case adv.GapPct >= 2 && adv.GapPct <= 5:
+		adv.Reasons = append(adv.Reasons, fmt.Sprintf("高开 %.2f%% 但竞价量不足（%.1f‰），防冲高回落", adv.GapPct, adv.VolRatio))
+	case adv.GapPct > 5 && adv.VolRatio >= 3:
+		score -= 5
+		adv.Reasons = append(adv.Reasons, fmt.Sprintf("大幅高开 %.2f%% 放量，谨防诱多出货", adv.GapPct))
+	case adv.GapPct > 5:
+		score -= 3
+		adv.Reasons = append(adv.Reasons, fmt.Sprintf("大幅高开 %.2f%% 无承接，谨慎追", adv.GapPct))
+	case adv.GapPct < -3 && adv.VolRatio >= 3:
+		score -= 12
+		adv.Reasons = append(adv.Reasons, fmt.Sprintf("低开 %.2f%% 且竞价放量（%.1f‰），抛压大", adv.GapPct, adv.VolRatio))
+	case adv.GapPct < -3:
+		score -= 5
+		adv.Reasons = append(adv.Reasons, fmt.Sprintf("低开 %.2f%% 竞价缩量，弱势", adv.GapPct))
+	default:
+		adv.Reasons = append(adv.Reasons, fmt.Sprintf("开盘 %.2f%%，幅度中性", adv.GapPct))
+	}
+
+	// 2. 9:20 后走势（不可撤单阶段，数据可信）
+	var at920, after920 []FenshiAuctionPoint
+	for _, p := range samples {
+		if p.Mins >= 5 {
+			after920 = append(after920, p)
+		}
+	}
+	if len(after920) >= 2 && prevClose > 0 {
+		at920 = after920[:1]
+		first := at920[0].Price
+		lastP := after920[len(after920)-1].Price
+		if lastP > first*1.005 {
+			score += 8
+			adv.Reasons = append(adv.Reasons, "9:20 后竞价持续上抬，资金抢筹")
+		} else if lastP < first*0.995 {
+			score -= 8
+			adv.Reasons = append(adv.Reasons, "9:20 后竞价持续下压，抛压出现")
+		}
+	} else {
+		adv.Reasons = append(adv.Reasons, "9:20 后样本不足，走势项未评估")
+	}
+
+	if score > 30 {
+		score = 30
+	}
+	if score < -30 {
+		score = -30
+	}
+	adv.Score = score
+	switch {
+	case score >= 12:
+		adv.Bias = "偏多"
+	case score <= -12:
+		adv.Bias = "偏空"
+	}
+	return adv
 }

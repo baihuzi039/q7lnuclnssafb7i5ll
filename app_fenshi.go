@@ -261,7 +261,7 @@ func fenshiAnalyzeFromTencent(stockCode string) (*FenshiAnalysisResult, error) {
 	code, _ := fenshiTencentCode(stockCode)
 	dctx := fenshiDailyCtx(code)
 	env := fenshiIndexEnv()
-	adv := fenshiRunRules(fenshiRuleIn{Trend: res.Trend, PrevClose: dctx.PrevClose, PrevHigh: dctx.PrevHigh, PrevLow: dctx.PrevLow, MA5: dctx.MA5, MA20: dctx.MA20, ShPct: env.ShPct, Now: time.Now()})
+	adv := fenshiRunRules(fenshiRuleIn{Trend: res.Trend, PrevClose: dctx.PrevClose, PrevHigh: dctx.PrevHigh, PrevLow: dctx.PrevLow, MA5: dctx.MA5, MA20: dctx.MA20, ShPct: env.ShPct, SzPct: env.SzPct, CybPct: env.CybPct, Now: time.Now()})
 	res.AdviceV2 = &adv
 	// 兑底说明
 	res.Advice = fmt.Sprintf("[腾讯源] %s 昨收%.2f 今开%.2f 现价%.2f（量比不可用，其余指标正常）", name, preClose, openPx, nowPx)
@@ -782,7 +782,7 @@ func fenshiAnalyzeCore(stockCode string) *FenshiAnalysisResult {
 	if code, ok := fenshiTencentCode(stockCode); ok {
 		dctx := fenshiDailyCtx(code)
 		env := fenshiIndexEnv()
-		adv := fenshiRunRules(fenshiRuleIn{Trend: resE.Trend, PrevClose: dctx.PrevClose, PrevHigh: dctx.PrevHigh, PrevLow: dctx.PrevLow, MA5: dctx.MA5, MA20: dctx.MA20, ShPct: env.ShPct, Now: time.Now()})
+		adv := fenshiRunRules(fenshiRuleIn{Trend: resE.Trend, PrevClose: dctx.PrevClose, PrevHigh: dctx.PrevHigh, PrevLow: dctx.PrevLow, MA5: dctx.MA5, MA20: dctx.MA20, ShPct: env.ShPct, SzPct: env.SzPct, CybPct: env.CybPct, Now: time.Now()})
 		resE.AdviceV2 = &adv
 	}
 	return resE
@@ -1016,7 +1016,7 @@ func fenshiAnalyzeFromSina(stockCode string) (*FenshiAnalysisResult, error) {
 	// v9f.22：规则引擎建议（新浪 5 分钟粒度数据较粗，仍可出倾向；失败不阻塞）
 	dctx := fenshiDailyCtx(tcode)
 	env := fenshiIndexEnv()
-	adv := fenshiRunRules(fenshiRuleIn{Trend: res.Trend, PrevClose: dctx.PrevClose, PrevHigh: dctx.PrevHigh, PrevLow: dctx.PrevLow, MA5: dctx.MA5, MA20: dctx.MA20, ShPct: env.ShPct, Now: time.Now()})
+	adv := fenshiRunRules(fenshiRuleIn{Trend: res.Trend, PrevClose: dctx.PrevClose, PrevHigh: dctx.PrevHigh, PrevLow: dctx.PrevLow, MA5: dctx.MA5, MA20: dctx.MA20, ShPct: env.ShPct, SzPct: env.SzPct, CybPct: env.CybPct, Now: time.Now()})
 	res.AdviceV2 = &adv
 	res.Advice = fmt.Sprintf("[新浪源·5分钟级] %s 昨收%.2f 今开%.2f 现价%.2f（分钟粒度较粗、量比不可用，趋势判断仍有效）", tcode, preClose, openPx, nowPx)
 	return res, nil
@@ -1040,6 +1040,7 @@ type FenshiDailyCtx struct {
 	MA5       float64 `json:"ma5"`
 	MA10      float64 `json:"ma10"`
 	MA20      float64 `json:"ma20"`
+	PrevVol   float64 `json:"prevVol"` // 昨日全天成交量（手，v9f.23 竞价量比基准）
 	Ok        bool    `json:"ok"`
 }
 
@@ -1104,6 +1105,7 @@ func fenshiDailyCtx(tcode string) FenshiDailyCtx {
 	ctx.PrevClose = getF(prev, 2)
 	ctx.PrevHigh = getF(prev, 3)
 	ctx.PrevLow = getF(prev, 4)
+	ctx.PrevVol = getF(prev, 5)
 	var closes []float64
 	for _, r := range rows {
 		row, _ := r.([]any)
@@ -1148,4 +1150,74 @@ func (a *App) FenshiDailyCtxGet(stockCode string) FenshiDailyCtx {
 		return FenshiDailyCtx{}
 	}
 	return fenshiDailyCtx(code)
+}
+
+// ==================== v9f.23 竞价分析接口 ====================
+
+// FenshiAuctionSnapResult 竞价单次采样（供前端 09:15-09:25 轮询）
+type FenshiAuctionSnapResult struct {
+	Mins     int     `json:"mins"`     // 距 09:15 的分钟数（0=非竞价时段或异常）
+	Price    float64 `json:"price"`    // 竞价虚拟成交价
+	Vol      float64 `json:"vol"`      // 竞价累计匹配量（手）
+	PreClose float64 `json:"preClose"` // 昨收
+	InWindow bool    `json:"inWindow"` // 是否处于竞价时段
+}
+
+// FenshiAuctionSnap 腾讯快照竞价采样（v9f.23：字段3=现价 4=昨收 6=累计量(手) 30=行情时间）
+func (a *App) FenshiAuctionSnap(stockCode string) FenshiAuctionSnapResult {
+	res := FenshiAuctionSnapResult{}
+	code, ok := fenshiTencentCode(stockCode)
+	if !ok {
+		return res
+	}
+	snapURL := fmt.Sprintf("https://qt.gtimg.cn/q=%s", code)
+	req, _ := http.NewRequest("GET", snapURL, nil)
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
+	resp, err := fenshiPlainClient.Do(req)
+	if err != nil {
+		return res
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return res
+	}
+	s := string(stockdata.GB18030ToUTF8(body))
+	i := strings.Index(s, "\"")
+	if i < 0 {
+		return res
+	}
+	s = s[i+1:]
+	if j := strings.LastIndex(s, "\""); j >= 0 {
+		s = s[:j]
+	}
+	parts := strings.Split(s, "~")
+	if len(parts) < 7 {
+		return res
+	}
+	res.Price, _ = strconv.ParseFloat(parts[3], 64)
+	res.PreClose, _ = strconv.ParseFloat(parts[4], 64)
+	res.Vol, _ = strconv.ParseFloat(parts[6], 64)
+	// 行情时间戳（parts[30] = yyyymmddhhmmss…），按服务端时间判断是否在 09:15-09:25
+	if len(parts) > 30 && len(parts[30]) >= 14 {
+		hh, _ := strconv.Atoi(parts[30][8:10])
+		mm, _ := strconv.Atoi(parts[30][10:12])
+		hm := hh*100 + mm
+		if hm >= 915 && hm <= 925 {
+			res.InWindow = true
+			res.Mins = hm/100*60 + hm%100 - (9*60 + 15)
+			if res.Mins < 0 {
+				res.Mins = 0
+			}
+			if res.Mins > 9 {
+				res.Mins = 9
+			}
+		}
+	}
+	return res
+}
+
+// FenshiAuctionEval 竞价样本评分（wails 绑定，转发纯函数）
+func (a *App) FenshiAuctionEval(samples []FenshiAuctionPoint, prevClose float64, prevVol float64) FenshiAuctionAdvice {
+	return fenshiAuctionEval(samples, prevClose, prevVol)
 }
