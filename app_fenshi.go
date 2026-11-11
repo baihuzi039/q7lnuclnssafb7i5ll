@@ -85,6 +85,7 @@ type FenshiAnalysisResult struct {
 
 	Signals []FenshiSignal `json:"signals"`
 	Advice  string         `json:"advice"`
+	AdviceV2 *FenshiAdvice `json:"adviceV2,omitempty"` // v9f.22 规则引擎建议
 	ErrMsg  string         `json:"errMsg"` // 非空表示分析失败及原因
 }
 
@@ -256,6 +257,12 @@ func fenshiAnalyzeFromTencent(stockCode string) (*FenshiAnalysisResult, error) {
 		Trend: trend,
 	}
 	res.Signals = fenshiBuildSignals(res)
+	// v9f.22：规则引擎建议（大盘/历史数据失败不阻塞主分析）
+	code, _ := fenshiTencentCode(stockCode)
+	dctx := fenshiDailyCtx(code)
+	env := a.FenshiIndexEnvGet()
+	adv := fenshiRunRules(fenshiRuleIn{Trend: res.Trend, PrevClose: dctx.PrevClose, PrevHigh: dctx.PrevHigh, PrevLow: dctx.PrevLow, MA5: dctx.MA5, MA20: dctx.MA20, ShPct: env.ShPct, Now: time.Now()})
+	res.AdviceV2 = &adv
 	// 兑底说明
 	res.Advice = fmt.Sprintf("[腾讯源] %s 昨收%.2f 今开%.2f 现价%.2f（量比不可用，其余指标正常）", name, preClose, openPx, nowPx)
 	return res, nil
@@ -771,6 +778,13 @@ func fenshiAnalyzeCore(stockCode string) *FenshiAnalysisResult {
 
 	resE.Signals = fenshiBuildSignals(resE)
 	resE.Advice = fenshiAdviceText(resE)
+	// v9f.22：规则引擎建议（失败不阻塞）
+	if code, ok := fenshiTencentCode(stockCode); ok {
+		dctx := fenshiDailyCtx(code)
+		env := a.FenshiIndexEnvGet()
+		adv := fenshiRunRules(fenshiRuleIn{Trend: resE.Trend, PrevClose: dctx.PrevClose, PrevHigh: dctx.PrevHigh, PrevLow: dctx.PrevLow, MA5: dctx.MA5, MA20: dctx.MA20, ShPct: env.ShPct, Now: time.Now()})
+		resE.AdviceV2 = &adv
+	}
 	return resE
 }
 
@@ -999,6 +1013,11 @@ func fenshiAnalyzeFromSina(stockCode string) (*FenshiAnalysisResult, error) {
 		Trend: trend,
 	}
 	res.Signals = fenshiBuildSignals(res)
+	// v9f.22：规则引擎建议（新浪 5 分钟粒度数据较粗，仍可出倾向；失败不阻塞）
+	dctx := fenshiDailyCtx(tcode)
+	env := a.FenshiIndexEnvGet()
+	adv := fenshiRunRules(fenshiRuleIn{Trend: res.Trend, PrevClose: dctx.PrevClose, PrevHigh: dctx.PrevHigh, PrevLow: dctx.PrevLow, MA5: dctx.MA5, MA20: dctx.MA20, ShPct: env.ShPct, Now: time.Now()})
+	res.AdviceV2 = &adv
 	res.Advice = fmt.Sprintf("[新浪源·5分钟级] %s 昨收%.2f 今开%.2f 现价%.2f（分钟粒度较粗、量比不可用，趋势判断仍有效）", tcode, preClose, openPx, nowPx)
 	return res, nil
 }

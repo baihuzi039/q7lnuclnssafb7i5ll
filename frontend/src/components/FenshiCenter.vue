@@ -85,6 +85,14 @@
             </svg>
           </div>
           <div class="advice-box">{{ result.advice }}</div>
+          <!-- v9f.22：规则引擎实时建议 -->
+          <div v-if="result.adviceV2" class="advice-v2" :class="result.adviceV2.bias === '偏多' ? 'long' : (result.adviceV2.bias === '偏空' ? 'short' : 'flat')">
+            <div class="adv-head">
+              <span class="adv-bias">【实时建议】{{ result.adviceV2.bias }}</span>
+              <span class="adv-score">参考度 {{ Math.abs(Math.round(result.adviceV2.score)) }}%</span>
+            </div>
+            <div v-for="(rs, ri) in result.adviceV2.reasons" :key="ri" class="adv-reason">{{ rs }}</div>
+          </div>
           <n-space vertical size="small">
             <n-tag v-for="s in result.signals" :key="s.name" :type="s.type === 'buy' ? 'success' : (s.type === 'warn' ? 'error' : 'info')" size="small" style="white-space: normal; height: auto; padding: 4px 8px;">
               {{ s.name }}：{{ s.desc }}（{{ s.prob }}）
@@ -472,4 +480,15 @@ function onChartDblClick() {
 .tip-text.strong { fill: #fff; font-weight: 700; font-size: 14px; }
 /* v9f.20.4：背景改纯黑与图表区一致 */
 .advice-box { background: #111; color: #d1e7ff; padding: 8px 10px; border-radius: 4px; margin: 8px 0; font-size: 13px; }
+/* v9f.22：规则引擎建议卡片 */
+.advice-v2 { background: #111; border-radius: 4px; margin-bottom: 8px; padding: 10px 12px; border-left: 3px solid #888; }
+.advice-v2.long { border-left-color: #e04b4b; }
+.advice-v2.short { border-left-color: #22a45d; }
+.adv-head { display: flex; justify-content: space-between; margin-bottom: 6px; }
+.adv-bias { font-size: 16px; font-weight: 700; }
+.advice-v2.long .adv-bias { color: #ff6b6b; }
+.advice-v2.short .adv-bias { color: #4ade80; }
+.advice-v2.flat .adv-bias { color: #d1d5db; }
+.adv-score { color: #888; font-size: 12px; }
+.adv-reason { color: #c8d6e5; font-size: 13px; line-height: 1.7; }
 </style>
