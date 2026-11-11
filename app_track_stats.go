@@ -243,6 +243,9 @@ func (a *App) GetTrackStats() *[]models.TrackStrategyStat {
 		stat.StrategyID = st.ID
 		stat.StrategyName = st.Name
 		db.Dao.Model(&models.TrackBatch{}).Where("strategy_id = ?", st.ID).Count(&stat.BatchCount)
+		// [v9f.11] 最新批次日期（页签旁显示"批次:MM-DD"）
+		db.Dao.Model(&models.TrackBatch{}).Where("strategy_id = ?", st.ID).
+			Select("COALESCE(MAX(trade_date),'')").Scan(&stat.LatestBatchDate)
 		sql := `SELECT COUNT(*) FROM track_items i JOIN track_batches b ON i.batch_id=b.id WHERE b.strategy_id=?`
 		db.Dao.Raw(sql, st.ID).Scan(&stat.ItemCount)
 		// 次日收盘统计

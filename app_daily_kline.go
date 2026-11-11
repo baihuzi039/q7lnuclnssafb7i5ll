@@ -157,7 +157,15 @@ func upsertDailyKLine(stockCode, stockName string, limit int) int {
 		return 0
 	}
 	rows := make([]models.DailyKLine, 0, len(*result.Data))
+	// [v9f.11] 盘中同步时丢弃当日未收盘的"半根K线"，保证库里数据完整准确：
+	// 当日 15:00 收盘前，东财返回的当日 bar 是实时进行中数据（close=最新价），写入会污染回填/选股。
+	// 已收盘（15:00 后）则正常保留当日 bar。
+	today := time.Now().Format("2006-01-02")
+	marketClosed := time.Now().After(time.Date(time.Now().Year(), time.Now().Month(), time.Now().Day(), 15, 0, 0, 0, time.Now().Location()))
 	for _, k := range *result.Data {
+		if k.Day == today && !marketClosed {
+			continue // 盘中：跳过当日未收盘数据
+		}
 		rows = append(rows, models.DailyKLine{
 			StockCode: stockCode,
 			StockName: stockName,

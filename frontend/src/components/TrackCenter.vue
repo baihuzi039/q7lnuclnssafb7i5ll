@@ -10,8 +10,8 @@
           </n-dropdown>
         </div>
         <n-tabs type="segment" v-model:value="activeStrategy" @update:value="onSwitchStrategy">
-          <n-tab v-for="s in builtinStrategies" :key="s.id" :name="String(s.id)">{{ s.name }}</n-tab>
-          <n-tab v-if="activeIsCustom" :name="activeStrategy">{{ activeStrategyName }}</n-tab>
+          <n-tab v-for="s in builtinStrategies" :key="s.id" :name="String(s.id)">{{ s.name }}<n-text depth="3" style="font-size:12px; margin-left:6px;">批次:{{ latestBatchDateMap[s.id] || '无' }}</n-text></n-tab>
+          <n-tab v-if="activeIsCustom" :name="activeStrategy">{{ activeStrategyName }}<n-text depth="3" style="font-size:12px; margin-left:6px;">批次:{{ latestBatchDateMap[activeStrategy] || '无' }}</n-text></n-tab>
         </n-tabs>
 
         <!-- 统计卡片 -->
@@ -58,7 +58,11 @@
             {{ importing ? '导入中...' : '扫描收件箱导入' }}
           </n-button>
           <n-button size="small" type="info" ghost @click="openInboxDir">打开收件箱文件夹</n-button>
-          <n-button v-if="isOvernightTab || isNiuZhiTab" size="small" type="info" ghost :loading="backfilling" @click="doBackfill">补齐历史</n-button>
+          <template v-if="isOvernightTab || isNiuZhiTab">
+            <n-date-picker v-model:value="backfillStart" type="date" size="small" style="width:130px" :clearable="false" placement="bottom-start" />
+            <n-date-picker v-model:value="backfillEnd" type="date" size="small" style="width:130px" :clearable="false" placement="bottom-start" />
+            <n-tooltip trigger="hover"><template #trigger><n-button size="small" type="info" ghost :loading="backfilling" @click="doBackfill">补齐历史</n-button></template>重演选定日期范围（跳过周末/已有批次自动跳过；每日需跑一次本地扫描，范围越长耗时越久）</n-tooltip>
+          </template>
           <n-button size="small" type="warning" ghost :loading="exporting" @click="exportCSV">导出 CSV</n-button>
           <n-button size="small" type="success" ghost :loading="exportingXlsx" @click="exportXlsxTop">导出 Excel</n-button>
           <n-tooltip trigger="hover"><template #trigger><n-button size="small" type="warning" ghost :loading="fixingNames" @click="fixNames">修正名称</n-button></template>用东财实时行情核对全部批次股票名称并修正（治改名/旧名单导致的错名，几千只约需几分钟）</n-tooltip>
@@ -151,7 +155,7 @@ import {
   ListTrackStrategies, AddTrackStrategy, DelTrackStrategy, GetTrackBatches,
   GetRecentTrackItems, GetTrackStats, CreateTrackBatch, ImportTrackInboxFolder,
   OpenTrackInboxDir, ExportTrackCSV, ExportTrackExcel, DeleteTrackBatch, DeleteTrackItem, RefreshAllTrackNames,
-  
+  FillAllTrackHoldings,
   RenameTrackStrategy,
   RunOvernightScan, RunOvernightAppendCloseSheet, RunOvernightScanJSON,
   RunNiuZhiScanJSON, BackfillTrackRange
@@ -236,6 +240,15 @@ function renameStrategy() {
 }
 const stat = ref({})
 const batches = ref([])
+// [v9f.11] 各策略最新批次日期（页签旁显示），从批次列表取最大 tradeDate
+const latestBatchDateMap = computed(() => {
+  const m = {}
+  for (const b of (batches.value || [])) {
+    const d = String(b.tradeDate || '')
+    if (d && (!m[b.strategyId] || d > m[b.strategyId])) m[b.strategyId] = d.slice(5)
+  }
+  return m
+})
 const items = ref([])
 const checkedBatches = ref([])
 const importing = ref(false)
@@ -514,7 +527,7 @@ function onSwitchStrategy() {
 function refresh() {
   if (!activeStrategy.value) return
   const id = Number(activeStrategy.value)
-  window.go.main.App.FillAllTrackHoldings().then(() => {
+  FillAllTrackHoldings().then(() => {
     GetTrackBatches(id).then((res) => { batches.value = res || [] })
     GetRecentTrackItems(id, 200).then((res) => { items.value = res || [] })
     GetTrackStats().then((res) => {
@@ -555,16 +568,24 @@ function fixNames() {
     refresh()
   }).catch(() => { fixingNames.value = false })
 }
+// [v9f.11] 补齐历史：用户可选日期范围（默认最近10个自然日）；范围越长耗时越久，点击后提示
+const backfillStart = ref(Date.now() - 10*86400000)
+const backfillEnd = ref(Date.now())
 async function doBackfill() {
   const st = (strategies.value || []).find(s => String(s.id) === String(activeStrategy.value))
   if (!st) return
+  const fmt = (ts) => {
+    const d = new Date(ts)
+    return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0')
+  }
+  const start = fmt(backfillStart.value)
+  const end = fmt(backfillEnd.value)
+  if (start > end) { if (window.$message) window.$message.warning('开始日期不能晚于结束日期'); return }
+  const days = Math.round((backfillEnd.value - backfillStart.value) / 86400000) + 1
   backfilling.value = true
   try {
-    // 默认补齐区间：该策略最早批次日期（或90天前）~ 今天
-    const today = new Date().toISOString().slice(0,10)
-    let start = batches.value.length ? batches.value[batches.value.length-1].tradeDate : ''
-    if (!start) start = new Date(Date.now()-90*86400000).toISOString().slice(0,10)
-    const msg = await BackfillTrackRange(st.name, start, today)
+    if (window.$message) window.$message.info(`开始补齐 ${start} ~ ${end}（约${days}天，每日需扫描一次，请耐心等待完成提示）`)
+    const msg = await BackfillTrackRange(st.name, start, end)
     if (window.$message) window.$message.info(msg || '补齐完成')
     refresh()
   } catch(e) {
