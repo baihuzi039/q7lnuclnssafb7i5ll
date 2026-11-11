@@ -266,16 +266,29 @@ function valueRange(trend) {
   return { min: min - pad, max: max + pad };
 }
 
-function xOf(i, n) { return CH.x0 + (i / (n - 1)) * (CH.x1 - CH.x0); }
 function yOf(v, min, max) { return CH.y1 - ((v - min) / (max - min || 1)) * (CH.y1 - CH.y0); }
 
+// 由 "09:30" 格式时间算分钟偏移（跳过午休：下午 = 120 + (分钟 - 13:00)）
+function minuteOffset(timeStr) {
+  const m = String(timeStr || "").match(/^(\d{1,2}):(\d{2})/);
+  if (!m) return 0;
+  const mins = parseInt(m[1]) * 60 + parseInt(m[2]);
+  const amEnd = 11 * 60 + 30, pmStart = 13 * 60;
+  if (mins <= 11 * 60 + 30) return mins - (9 * 60 + 30); // 上午：9:30起
+  return 120 + Math.max(0, mins - pmStart);               // 下午：120起续算
+}
+
+// v9f.20.4：曲线按分钟偏移定位（与固定横轴刻度对齐），盘中未走完的右侧留白
 function ptsPath(col) {
   const r = result.value;
   const trend = r ? r.trend : [];
   if (!trend || trend.length < 2) return "";
   const { min, max } = valueRange(trend);
-  const n = trend.length;
-  return trend.map((t, i) => xOf(i, n).toFixed(1) + "," + yOf(t[col], min, max).toFixed(1)).join(" ");
+  return trend.map((t) => {
+    const off = Math.max(0, Math.min(240, minuteOffset(t.time)));
+    const x = CH.x0 + (off / 240) * (CH.x1 - CH.x0);
+    return x.toFixed(1) + "," + yOf(t[col], min, max).toFixed(1);
+  }).join(" ");
 }
 
 // 纵轴 4 条网格线：价格+涨跌幅
@@ -305,24 +318,20 @@ const prevCloseY = computed(() => {
 const xTicks = computed(() => {
   const r = result.value;
   if (!r || !r.trend || r.trend.length < 2) return [];
-  const n = r.trend.length; // 全天 240/241 个分钟点，上午 121 点
-  const amPts = Math.min(n, 121);
-  // v9f.20.1 修复：分钟偏移换算为真实时钟，下午要跳过午休（11:30~13:00）
+  // v9f.20.4 修复：横轴刻度固定按全天 241 点定位（9:30~11:30 + 13:00~15:00），
+  // 不随盘中已返回的数据长度缩放，位置固定不动；
+  // 曲线绘制同样按“真实分钟偏移”定位（见 ptsPath），未走完的右侧留白
+  const FULL = 241; // 全天 9:30 起 241 个分钟点
   const label = (m) => {
     if (m === 120) return "11:30/13:00";
-    // 上午：9:30 + m；下午：13:00 + (m-120)
     const total = m <= 120 ? 9 * 60 + 30 + m : 13 * 60 + (m - 120);
     const h = Math.floor(total / 60) % 24, mm = total % 60;
     return `${h}:${String(mm).padStart(2, "0")}`;
   };
-  // 分钟偏移数组：0,30,60,90,120（上午）→ 120(=11:30/13:00),150,180,210,240（下午映射回轴位置）
   const mins = [0, 30, 60, 90, 120, 150, 180, 210, 240];
   return mins.map((m) => {
-    // 轴位置：上午按 0..120 分钟 → 索引 0..amPts-1；下午 m>120 → 121..n-1
-    let idx;
-    if (m <= 120) idx = Math.round((m / 120) * (amPts - 1));
-    else idx = Math.min(n - 1, (amPts - 1) + Math.round(((m - 120) / 120) * (n - amPts)));
-    return { x: xOf(idx, n), label: label(m) };
+    const x = CH.x0 + (m / 240) * (CH.x1 - CH.x0);
+    return { x, label: label(m) };
   });
 });
 
@@ -332,8 +341,8 @@ const lastDot = computed(() => {
   const trend = r ? r.trend : [];
   if (!trend || trend.length < 2) return null;
   const { min, max } = valueRange(trend);
-  const n = trend.length;
-  return { x: xOf(n - 1, n), y: yOf(trend[n - 1].now, min, max) };
+  const off = Math.max(0, Math.min(240, minuteOffset(trend[trend.length - 1].time)));
+  return { x: CH.x0 + (off / 240) * (CH.x1 - CH.x0), y: yOf(trend[trend.length - 1].now, min, max) };
 });
 
 // ==================== 十字线交互（v9f.20 通达信式） ====================
@@ -353,9 +362,15 @@ function chartIndexFromEvent(e) {
   // viewBox 860 宽，preserveAspectRatio=none → 线性映射
   const vx = ((e.clientX - rect.left) / rect.width) * 860;
   if (vx < CH.x0 || vx > CH.x1) return -1;
+  // v9f.20.4：由鼠标 x 反算分钟偏移，再找最接近的数据点（与曲线定位一致）
+  const off = Math.round(((vx - CH.x0) / (CH.x1 - CH.x0)) * 240);
   const n = r.trend.length;
-  let idx = Math.round(((vx - CH.x0) / (CH.x1 - CH.x0)) * (n - 1));
-  return Math.max(0, Math.min(n - 1, idx));
+  let best = 0, bestDiff = Infinity;
+  for (let i = 0; i < n; i++) {
+    const d = Math.abs(minuteOffset(r.trend[i].time) - off);
+    if (d < bestDiff) { bestDiff = d; best = i; }
+  }
+  return best;
 }
 
 function buildCross(idx) {
@@ -364,7 +379,8 @@ function buildCross(idx) {
   const trend = r.trend;
   const { min, max } = valueRange(trend);
   const t = trend[idx];
-  const x = xOf(idx, trend.length);
+  const off = Math.max(0, Math.min(240, minuteOffset(t.time)));
+  const x = CH.x0 + (off / 240) * (CH.x1 - CH.x0);
   // 十字线横线放在该点价格位置
   const y = yOf(t.now, min, max);
   cross.value = { x, y };
@@ -454,5 +470,6 @@ function onChartDblClick() {
 .tip-rect { fill: rgba(20,20,20,.92); stroke: #4aa3ff; stroke-width: 1; }
 .tip-text { fill: #ddd; font-size: 12px; font-family: "SimHei", "Microsoft YaHei", sans-serif; }
 .tip-text.strong { fill: #fff; font-weight: 700; font-size: 14px; }
-.advice-box { background: #1f2937; color: #d1e7ff; padding: 8px 10px; border-radius: 4px; margin: 8px 0; font-size: 13px; }
+/* v9f.20.4：背景改纯黑与图表区一致 */
+.advice-box { background: #111; color: #d1e7ff; padding: 8px 10px; border-radius: 4px; margin: 8px 0; font-size: 13px; }
 </style>
