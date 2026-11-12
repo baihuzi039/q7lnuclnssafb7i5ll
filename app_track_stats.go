@@ -197,11 +197,19 @@ func fillItemHoldings(item *models.TrackItem, batch models.TrackBatch) bool {
 				&item.Hold5Pct, &item.Hold6Pct, &item.Hold7Pct, &item.Hold8Pct}
 			setVal2(slots[mIdx-1], pct(r.Close))
 			if mIdx == 1 { // 次日细节：开高低收（次日=市场第2个交易日）
-				if r.Open > 0 {
-					setVal2(&item.NextOpenPct, pct(r.Open))
+				// [v9f.17.5] 兑底：Open/High 为 0（历史坏行/数据源缺失）时用 Close 兑底，格子不再空
+				no, nh := r.Open, r.High
+				if no <= 0 {
+					no = r.Close
 				}
-				if r.High > 0 {
-					setVal2(&item.NextHighPct, pct(r.High))
+				if nh <= 0 {
+					nh = r.Close
+				}
+				if no > 0 {
+					setVal2(&item.NextOpenPct, pct(no))
+				}
+				if nh > 0 {
+					setVal2(&item.NextHighPct, pct(nh))
 				}
 				setVal2(&item.NextClosePct, pct(r.Close))
 			}

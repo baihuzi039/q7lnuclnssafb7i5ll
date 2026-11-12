@@ -104,9 +104,27 @@ func syncDailyKLineJob(ctx context.Context) {
 		}
 		return false
 	}
+	// [v9f.17.5] 坏行修复：统计 open=0 的坏行票，强制重拉（不再被“已最新”判定跳过）
+	badCodes := map[string]bool{}
+	type badRow struct {
+		StockCode string
+	}
+	var badRows []badRow
+	if err := db.Dao.Model(&models.DailyKLine{}).
+		Where("open = 0 OR close = 0 OR high = 0").
+		Select("DISTINCT stock_code").Find(&badRows).Error; err == nil {
+		for _, r := range badRows {
+			badCodes[r.StockCode] = true
+		}
+	}
+	logger.SugaredLogger.Infof("坏行检测: %d 只票存在 open/close/high=0 的坏行，将强制重拉", len(badCodes))
 	for _, b := range basics {
 		if isEtf(b.Symbol) {
 			continue // ETF/LOF 不拉日线（回测用不到，白耗接口配额）
+		}
+		if _, isBad := badCodes[b.TsCode]; isBad {
+			targets = append(targets, b) // 坏行票强制重拉
+			continue
 		}
 		if d, ok := stockLatest[b.TsCode]; ok && globalLatest != "" && d >= globalLatest {
 			continue
@@ -183,8 +201,9 @@ func upsertDailyKLine(stockCode, stockName string, limit int) int {
 	// v9e.9.2：已有行不再跳过，补写 涨跌幅/换手率；[v9f] 扩为 open/close/pct_change/turnover 四列
 	// （治历史坏行：open=0 导致策略跟踪"次日开盘"空缺，v9f 起同步顺带补齐；0值仍不更新保护已有值）
 	err := db.Dao.Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "stock_code"}, {Name: "day"}},
-		DoUpdates: clause.AssignmentColumns([]string{"open", "close", "pct_change", "turnover"}),
+		Columns: []clause.Column{{Name: "stock_code"}, {Name: "day"}},
+		// [v9f.17.5] 补齐 high/low/volume/amount：原只更新4列，历史坏行的 high=0 永远修不上（次日高空的直接原因）
+		DoUpdates: clause.AssignmentColumns([]string{"open", "close", "high", "low", "volume", "amount", "pct_change", "turnover"}),
 		Where:     clause.Where{Exprs: []clause.Expression{gorm.Expr("excluded.open <> 0 OR excluded.close <> 0 OR excluded.pct_change <> 0 OR excluded.turnover <> 0")}},
 	}).CreateInBatches(&rows, 500).Error
 	if err != nil {
