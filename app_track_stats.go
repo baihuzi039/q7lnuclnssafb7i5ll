@@ -40,14 +40,33 @@ func tradeDaysFrom(stockCode, baseDay string, n int) ([]models.DailyKLine, bool)
 	return rows, true
 }
 
-// [v9f.17.2] marketTradingDays 全市场交易日历：取大盘股（平安601318）的K线日历作为市场基准
-// 返回 day >= baseDay 的前 n 个交易日（含 baseDay 当天，若当天为交易日）
+// [v9f.17.2] marketTradingDays 全市场交易日历：取一只大盘蓝筹的K线日历作为市场基准
+// [v9f.17.2-fix] 日线库代码格式可能是 600036.SH（TsCode）或 600036，先探测再查；平安银行是 000001
 func marketTradingDays(baseDay string, n int) []string {
+	for _, code := range []string{"600036.SH", "000001.SZ", "600036", "000001"} {
+		var rows []models.DailyKLine
+		db.Dao.Where("stock_code = ? AND day >= ?", code, baseDay).Order("day ASC").Limit(n).Find(&rows)
+		if len(rows) > 0 {
+			days := make([]string, 0, len(rows))
+			for _, r := range rows {
+				days = append(days, r.Day)
+			}
+			return days
+		}
+	}
+	// 兜底：直接取全库最大 day 序列（任意活跃票的日历都行）
 	var rows []models.DailyKLine
-	db.Dao.Where("stock_code = ? AND day >= ?", "601318", baseDay).Order("day ASC").Limit(n).Find(&rows)
-	days := make([]string, 0, len(rows))
+	db.Dao.Where("day >= ?", baseDay).Order("day ASC").Limit(n * 50).Find(&rows)
+	seen := map[string]bool{}
+	days := []string{}
 	for _, r := range rows {
-		days = append(days, r.Day)
+		if !seen[r.Day] {
+			seen[r.Day] = true
+			days = append(days, r.Day)
+			if len(days) >= n {
+				break
+			}
+		}
 	}
 	return days
 }
