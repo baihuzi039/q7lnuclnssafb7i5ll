@@ -35,6 +35,12 @@ type fenshiRuleIn struct {
 	SzPct     float64 // v9f.23：深成指涨跌%
 	CybPct    float64 // v9f.23：创业板指涨跌%
 	Now       time.Time
+	// v9f.26：位置/趋势过滤层
+	Pos       float64 // 现价在近20日区间位置 0~1
+	BelowMA10 bool    // 日K在MA10下方（趋势过滤）
+	BelowMA20 bool
+	IsZT      bool    // 昨日涨停（爆量比语境）
+	PrevVol   float64 // 昨日全天量（爆量比基准）
 }
 
 // fenshiRunRules 规则引擎主入口
@@ -87,6 +93,26 @@ func fenshiRunRulesAdv(in fenshiRuleIn, auction *FenshiAuctionAdvice) FenshiAdvi
 	add(s, why)
 	s, why = fenshiRulePlatform(in.Trend)
 	add(s, why)
+	// v9f.26：三点六原则 / 爆量比 / 诱多细化
+	s, why = fenshiRuleThreePoints(in.Trend, in.Now)
+	add(s, why)
+	s, why = fenshiRuleZTRate(auction, in)
+	add(s, why)
+	s, why = fenshiRuleAuctionTrap(in.Trend)
+	add(s, why)
+	// v9f.26：位置/趋势过滤层（对累计分做调整，正分项降权+高位出货扣分）
+	score, why = fenshiApplyPosFilter(score, posSum, in, in.Trend)
+	if why != "" {
+		reasons = append(reasons, why)
+		if why[:6] == "下跌趋势" && posSum > 0 {
+			// 降权部分从 posSum 中扣除，保持置信度口径一致
+			posSum *= 0.7
+		} else {
+			if why[:6] == "近20日高位" {
+				negSum += 8
+			}
+		}
+	}
 	// 竞价共振：竞价结论与盘中同向时加权融入（±10 封顶）
 	if auction != nil && auction.Score != 0 {
 		as := auction.Score / 30 * 10 // 竞价±30 映射到 ±10
@@ -567,6 +593,131 @@ func fenshiRulePlatform(t []FenshiTick) (float64, string) {
 			return 10, fmt.Sprintf("窄幅横盘（振幅%.1f%%）后放量突破平台上沿，高控盘启动", amp)
 		}
 		return 4, fmt.Sprintf("窄幅横盘（振幅%.1f%%）站稳均价线，高控盘迹象，等放量突破", amp)
+	}
+	return 0, ""
+}
+
+// ==================== v9f.26 三资料整合规则 ====================
+
+// fenshiRuleThreePoints 三点六原则（操盘笔记 P93-94）
+// 9:40 / 9:50 / 10:00 三点与开盘价比较；10:00 后生效一次
+// 三点逐步抬高=多方强(+8)；不断降低=空方主动(-8)；混合=震荡(0)
+func fenshiRuleThreePoints(t []FenshiTick, now time.Time) (float64, string) {
+	hm := now.Hour()*100 + now.Minute()
+	if hm < 1000 || len(t) < 31 { // 10:00 = 开盘后第31分钟（含9:30那根）
+		return 0, ""
+	}
+	openPx := t[0].Now
+	if openPx <= 0 {
+		return 0, ""
+	}
+	get := func(mins int) float64 { // mins：开盘后的分钟数（0=9:30）
+		idx := mins
+		if idx >= len(t) {
+			idx = len(t) - 1
+		}
+		return t[idx].Now
+	}
+	p1, p2, p3 := get(10), get(20), get(30) // 9:40 / 9:50 / 10:00
+	up := p1 > openPx && p2 > openPx && p3 > openPx && p3 >= p2 && p2 >= p1
+	down := p1 < openPx && p2 < openPx && p3 < openPx && p3 <= p2 && p2 <= p1
+	switch {
+	case up:
+		return 8, "9:40/9:50/10:00 三点逐步抬高，多方强势（三点六原则）"
+	case down:
+		return -8, "9:40/9:50/10:00 三点不断降低，空方占优（三点六原则）"
+	}
+	return 0, ""
+}
+
+// fenshiApplyPosFilter v9f.26 位置/趋势过滤层（股笔记"位置>量价>分时"+竞价A4+9类看空）
+// ① 日K昨收在 MA10/MA20 下方（下跌趋势）→ 所有正向得分 ×0.7
+// ② 现价近20日高位（Pos>0.85）且盘中放量滞涨 → 出货风险提示
+// 返回：调整后分数、追加理由
+func fenshiApplyPosFilter(score float64, posSum float64, in fenshiRuleIn, t []FenshiTick) (float64, string) {
+	why := ""
+	if in.BelowMA10 || in.BelowMA20 {
+		if posSum > 0 {
+			score -= posSum * 0.3
+			why = "下跌趋势（日K在均线下方），多头信号已降权30%"
+		}
+	}
+	// 高位放量滞涨：位置>0.85 + 现价距日高回落>0.5% + 放量
+	if in.Pos > 0.85 && len(t) >= 25 {
+		last := t[len(t)-1]
+		hi := t[0].Now
+		for _, k := range t {
+			if k.Now > hi {
+				hi = k.Now
+			}
+		}
+		if fenshiVolBreak(t) && last.Now < hi*0.995 {
+			score -= 8
+			why = "近20日高位放量但冲高回落，警惕高位出货"
+		}
+	}
+	return score, why
+}
+
+// fenshiRuleAuctionTrap 诱多细化（竞价系列第七节）
+// ① 9:15-9:20 急拉 + 9:20-9:21 急落/量缩 → 诱多（由竞价模块数据判定，此处盘中复核：
+//    若开盘价高于 9:20 采样价 1.5% 以上但现价已回落到开盘价下方 → 旗杆诱多）
+// ② 盘中反复冲高回落 ≥2 次 → 反复诱多（-6）
+func fenshiRuleAuctionTrap(t []FenshiTick) (float64, string) {
+	n := len(t)
+	if n < 60 {
+		return 0, ""
+	}
+	// ② 盘中反复冲高回落：统计"冲高回落幅度>1%且随后30分钟未收复"的次数
+	count := 0
+	for start := 10; start < n-30; {
+		_ = start
+		seg := t[start : start+30]
+		hi := seg[0].Now
+		hiIdx := 0
+		for i, k := range seg {
+			if k.Now > hi {
+				hi = k.Now
+				hiIdx = i
+			}
+		}
+		if hiIdx > 0 && hiIdx < 10 {
+			after := seg[hiIdx:]
+			low := after[0].Now
+			for _, k := range after {
+				if k.Now < low {
+					low = k.Now
+				}
+			}
+			if (hi-low)/hi > 0.01 {
+				count++
+				start += 29 // 步进30（post+1）
+			}
+		}
+		start++
+	}
+	if count >= 2 {
+		return -6, fmt.Sprintf("盘中反复冲高回落 %d 次（每次>1%%），反复诱多迹象", count)
+	}
+	return 0, ""
+}
+
+// fenshiRuleZTRate 爆量比（竞价系列第十节，仅昨日涨停股）
+// 今日竞价量 vs 昨日全天量（近似口径：昨日封板最大分钟量不可得，用全天量×0.06 近似封板一分钟占比）
+// 竞价量占比 ≥5%（近似爆量比≥50%）→ +8；高开>7% 需 ≥7% → 不足则不加分
+func fenshiRuleZTRate(auction *FenshiAuctionAdvice, in fenshiRuleIn) (float64, string) {
+	if !in.IsZT || auction == nil || in.PrevVol <= 0 {
+		return 0, ""
+	}
+	ratio := auction.VolRatio / 1000 / 0.06 * 0.5 // 近似映射：VolRatio‰ → 爆量比
+	if auction.GapPct > 7 {
+		if ratio >= 0.7 {
+			return 8, fmt.Sprintf("高开%.1f%%且竞价爆量比达标（≈%.0f%%），一进二强势", auction.GapPct, ratio*100)
+		}
+		return -4, fmt.Sprintf("高开%.1f%%但竞价量不足（爆量比≈%.0f%%<70%%），追高风险大", auction.GapPct, ratio*100)
+	}
+	if ratio >= 0.5 {
+		return 8, fmt.Sprintf("昨涨停今竞价量充足（爆量比≈%.0f%%≥50%%），资金认可", ratio*100)
 	}
 	return 0, ""
 }

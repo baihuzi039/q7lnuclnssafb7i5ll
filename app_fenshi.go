@@ -261,7 +261,7 @@ func fenshiAnalyzeFromTencent(stockCode string) (*FenshiAnalysisResult, error) {
 	code, _ := fenshiTencentCode(stockCode)
 	dctx := fenshiDailyCtx(code)
 	env := fenshiIndexEnv()
-	adv := fenshiRunRulesAdv(fenshiRuleIn{Trend: res.Trend, PrevClose: dctx.PrevClose, PrevHigh: dctx.PrevHigh, PrevLow: dctx.PrevLow, MA5: dctx.MA5, MA20: dctx.MA20, ShPct: env.ShPct, SzPct: env.SzPct, CybPct: env.CybPct, Now: time.Now()}, auctionMemoGet())
+	adv := fenshiRunRulesAdv(fenshiRuleIn{Trend: res.Trend, PrevClose: dctx.PrevClose, PrevHigh: dctx.PrevHigh, PrevLow: dctx.PrevLow, MA5: dctx.MA5, MA20: dctx.MA20, ShPct: env.ShPct, SzPct: env.SzPct, CybPct: env.CybPct, Now: time.Now(), Pos: dctx.Pos, BelowMA10: dctx.MA10 > 0 && dctx.PrevClose < dctx.MA10, BelowMA20: dctx.MA20 > 0 && dctx.PrevClose < dctx.MA20, IsZT: dctx.IsZT, PrevVol: dctx.PrevVol}, auctionMemoGet())
 	res.AdviceV2 = &adv
 	// 兑底说明
 	res.Advice = fmt.Sprintf("[腾讯源] %s 昨收%.2f 今开%.2f 现价%.2f（量比不可用，其余指标正常）", name, preClose, openPx, nowPx)
@@ -782,7 +782,7 @@ func fenshiAnalyzeCore(stockCode string) *FenshiAnalysisResult {
 	if code, ok := fenshiTencentCode(stockCode); ok {
 		dctx := fenshiDailyCtx(code)
 		env := fenshiIndexEnv()
-		adv := fenshiRunRulesAdv(fenshiRuleIn{Trend: resE.Trend, PrevClose: dctx.PrevClose, PrevHigh: dctx.PrevHigh, PrevLow: dctx.PrevLow, MA5: dctx.MA5, MA20: dctx.MA20, ShPct: env.ShPct, SzPct: env.SzPct, CybPct: env.CybPct, Now: time.Now()}, auctionMemoGet())
+		adv := fenshiRunRulesAdv(fenshiRuleIn{Trend: resE.Trend, PrevClose: dctx.PrevClose, PrevHigh: dctx.PrevHigh, PrevLow: dctx.PrevLow, MA5: dctx.MA5, MA20: dctx.MA20, ShPct: env.ShPct, SzPct: env.SzPct, CybPct: env.CybPct, Now: time.Now(), Pos: dctx.Pos, BelowMA10: dctx.MA10 > 0 && dctx.PrevClose < dctx.MA10, BelowMA20: dctx.MA20 > 0 && dctx.PrevClose < dctx.MA20, IsZT: dctx.IsZT, PrevVol: dctx.PrevVol}, auctionMemoGet())
 		resE.AdviceV2 = &adv
 	}
 	return resE
@@ -1016,7 +1016,7 @@ func fenshiAnalyzeFromSina(stockCode string) (*FenshiAnalysisResult, error) {
 	// v9f.22：规则引擎建议（新浪 5 分钟粒度数据较粗，仍可出倾向；失败不阻塞）
 	dctx := fenshiDailyCtx(tcode)
 	env := fenshiIndexEnv()
-	adv := fenshiRunRulesAdv(fenshiRuleIn{Trend: res.Trend, PrevClose: dctx.PrevClose, PrevHigh: dctx.PrevHigh, PrevLow: dctx.PrevLow, MA5: dctx.MA5, MA20: dctx.MA20, ShPct: env.ShPct, SzPct: env.SzPct, CybPct: env.CybPct, Now: time.Now()}, auctionMemoGet())
+	adv := fenshiRunRulesAdv(fenshiRuleIn{Trend: res.Trend, PrevClose: dctx.PrevClose, PrevHigh: dctx.PrevHigh, PrevLow: dctx.PrevLow, MA5: dctx.MA5, MA20: dctx.MA20, ShPct: env.ShPct, SzPct: env.SzPct, CybPct: env.CybPct, Now: time.Now(), Pos: dctx.Pos, BelowMA10: dctx.MA10 > 0 && dctx.PrevClose < dctx.MA10, BelowMA20: dctx.MA20 > 0 && dctx.PrevClose < dctx.MA20, IsZT: dctx.IsZT, PrevVol: dctx.PrevVol}, auctionMemoGet())
 	res.AdviceV2 = &adv
 	res.Advice = fmt.Sprintf("[新浪源·5分钟级] %s 昨收%.2f 今开%.2f 现价%.2f（分钟粒度较粗、量比不可用，趋势判断仍有效）", tcode, preClose, openPx, nowPx)
 	return res, nil
@@ -1041,6 +1041,10 @@ type FenshiDailyCtx struct {
 	MA10      float64 `json:"ma10"`
 	MA20      float64 `json:"ma20"`
 	PrevVol   float64 `json:"prevVol"` // 昨日全天成交量（手，v9f.23 竞价量比基准）
+	High20    float64 `json:"high20"` // v9f.26：近20日最高价（位置过滤）
+	Low20     float64 `json:"low20"`  // v9f.26：近20日最低价
+	IsZT      bool    `json:"isZT"`   // v9f.26：昨日涨停（爆量比语境开关）
+	Pos       float64 `json:"pos"`    // v9f.26：现价在近20日区间的位置 0~1（1=最高）
 	Ok        bool    `json:"ok"`
 }
 
@@ -1120,6 +1124,34 @@ func fenshiDailyCtx(tcode string) FenshiDailyCtx {
 		return s / float64(k)
 	}
 	ctx.MA5, ctx.MA10, ctx.MA20 = sum(5), sum(10), sum(20)
+	// v9f.26：近20日高低点、位置百分位、昨涨停标记
+	last := rows[len(rows)-1]
+	lrow, _ := last.([]any)
+	cur := getF(lrow, 2) // 最后一根是今日（盘中即现价基准）
+	hi20, lo20 := -1e9, 1e9
+	for _, r := range rows[len(rows)-20:] {
+		row, _ := r.([]any)
+		h := getF(row, 3)
+		l := getF(row, 4)
+		if h > hi20 {
+			hi20 = h
+		}
+		if l > 0 && l < lo20 {
+			lo20 = l
+		}
+	}
+	ctx.High20, ctx.Low20 = hi20, lo20
+	if hi20 > lo20 && cur > 0 {
+		ctx.Pos = (cur - lo20) / (hi20 - lo20)
+	}
+	// 昨涨停判定：主板10%，创业板(30开头)/科创(68开头)20%（用昨收 vs 前收涨幅≥9.8%近似，避免精确涨跌幅误判）
+	if len(rows) >= 3 {
+		pprev, _ := rows[len(rows)-3].([]any)
+		pc := getF(pprev, 2)
+		if pc > 0 && (ctx.PrevClose-pc)/pc >= 0.098 {
+			ctx.IsZT = true
+		}
+	}
 	ctx.Ok = ctx.PrevClose > 0
 	return ctx
 }
