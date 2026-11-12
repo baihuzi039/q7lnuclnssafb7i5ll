@@ -159,7 +159,8 @@ const selectedCode = ref("");
 function rowProps(row) {
   const sel = row.code === selectedCode.value;
   return {
-    style: "cursor:pointer" + (sel ? ";background: rgba(0,120,255,0.35); outline: 1px solid #4aa3ff;" : ""),
+    class: sel ? "fs-row-selected" : "", // v9f.25.1：tr背景会被td盖住，改用class+深度选择器作用到td
+    style: "cursor:pointer",
     onClick: () => analyze(row.code),
   };
 }
@@ -535,6 +536,17 @@ function onChartDblClick() {
 </script>
 
 <style scoped>
+/* v9f.25.1：选中行高亮——naive-ui 的 td 背景优先级高，必须用 :deep 穿透作用到 td */
+:deep(.fs-row-selected td) {
+  background-color: rgba(0, 120, 255, 0.35) !important;
+}
+:deep(.fs-row-selected td:first-child) {
+  border-left: 3px solid #4aa3ff;
+}
+:deep(.fs-row-selected span) {
+  color: #7fc4ff !important;
+  font-weight: 600;
+}
 .fenshi-center { padding: 12px; }
 .mb12 { margin-bottom: 12px; }
 .layout { display: grid; grid-template-columns: 300px 1fr; gap: 12px; align-items: start; }
