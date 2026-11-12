@@ -32,20 +32,12 @@
               <span class="clock-time">{{ clockStr }}</span>
               <span class="clock-date">{{ clockDate }}</span>
             </div>
-            <div class="chart-title">
-              <span class="title-name">{{ result.name }}</span>
-              <span class="title-code">（{{ stripPrefix(result.code) }}）</span>
-            </div>
-            <div class="limit-box buy">
-              <div class="limit-label">最高加价</div>
-              <div class="limit-val" :key="'b' + result.price">{{ (result.price * 1.02).toFixed(2) }}</div>
-            </div>
-            <div class="limit-box sell">
-              <div class="limit-label">最高让价</div>
-              <div class="limit-val" :key="'s' + result.price">{{ (result.price * 0.98).toFixed(2) }}</div>
-            </div>
             <div class="quote-line">
               <div class="live-price-row">
+                <span class="title-name">{{ result.name }}</span>
+                <span class="title-code">（{{ stripPrefix(result.code) }}）</span>
+                <span class="limit-inline buy">加 {{ (result.price * 1.02).toFixed(2) }}</span>
+                <span class="limit-inline sell">让 {{ (result.price * 0.98).toFixed(2) }}</span>
                 <span class="live-price" :class="result.changePct >= 0 ? 'up' : 'down'" :key="result.price">{{ result.price.toFixed(2) }}</span>
                 <span class="live-pct" :class="result.changePct >= 0 ? 'up' : 'down'" :key="result.changePct">{{ result.changePct >= 0 ? '+' : '' }}{{ result.changePct.toFixed(2) }}%</span>
               </div>
@@ -208,11 +200,33 @@ onMounted(() => {
   loadWatchlist();
   startClock();
   auctionTimer = setInterval(auctionPoll, 15000);
+  // v9f.23.7：盘中每15秒自动刷新当前股分时（仅交易日 9:30-15:00）
+  refreshTimer = setInterval(autoRefresh, 15000);
 });
 onUnmounted(() => {
   stopClock();
   if (auctionTimer) clearInterval(auctionTimer);
+  if (refreshTimer) clearInterval(refreshTimer);
 });
+
+// ==================== 盘中自动刷新（v9f.23.7） ====================
+let refreshTimer = null;
+let refreshing = false;
+async function autoRefresh() {
+  if (refreshing || !selectedCode.value) return; // 上一轮未完或无选中股则跳过
+  const now = new Date(Date.now() + clockOffset);
+  const day = now.getDay();
+  if (day === 0 || day === 6) return;
+  const hm = now.getHours() * 100 + now.getMinutes();
+  // 盘中 + 竞价时段都刷（竞价时数据会预热）
+  if ((hm < 930 || hm > 1500) && !(hm >= 915 && hm <= 925)) return;
+  refreshing = true;
+  try {
+    const r = await FenshiAnalyzeStock(selectedCode.value);
+    if (r && !r.errMsg) result.value = r;
+  } catch (e) { /* 静默，下一轮重试 */ }
+  finally { refreshing = false; }
+}
 
 async function analyze(code) {
   analyzing.value = true;
@@ -527,16 +541,11 @@ function onChartDblClick() {
 .add-msg.ok { color: #22a45d; }
 .add-msg.err { color: #e04b4b; }
 /* v9f.20.3：三栏 grid（1fr auto 1fr），中栏真居中，左右栏各自独立永不重叠 */
-/* v9f.23.6：五栏 grid——时钟 | 名称(居中) | 加价框 | 让价框 | 行情 */
-.top-row { display: grid; grid-template-columns: auto 1fr auto auto auto; align-items: center; gap: 14px; margin-bottom: 6px; }
-.chart-title { justify-self: center; }
-.limit-box { border: 1px solid #666; border-radius: 4px; padding: 2px 10px; text-align: center; min-width: 96px; }
-.limit-box.buy { border-color: rgba(224,75,75,.6); }
-.limit-box.sell { border-color: rgba(34,164,93,.6); }
-.limit-label { font-size: 11px; color: #999; line-height: 1.3; }
-.limit-val { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
-.limit-box.buy .limit-val { color: #e04b4b; animation: price-blink 0.5s ease-in-out 1; }
-.limit-box.sell .limit-val { color: #22a45d; animation: price-blink 0.5s ease-in-out 1; }
+/* v9f.23.7：四栏 grid——时钟 | 行情区(名称+加让价+价格+涨幅+指标) | 让价并入行情行 */
+.top-row { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 14px; margin-bottom: 6px; }
+.limit-inline { font-size: 15px; font-weight: 700; padding: 1px 8px; border-radius: 3px; margin-left: 10px; }
+.limit-inline.buy { color: #e04b4b; border: 1px solid rgba(224,75,75,.5); }
+.limit-inline.sell { color: #22a45d; border: 1px solid rgba(34,164,93,.5); }
 .big-clock { justify-self: start; line-height: 1.2; }
 .chart-title { justify-self: center; display: flex; align-items: baseline; gap: 2px; white-space: nowrap; }
 .title-name { font-size: 26px; font-weight: 800; color: #f5c542; letter-spacing: 2px; text-shadow: 0 0 10px rgba(245,197,66,.35); }
