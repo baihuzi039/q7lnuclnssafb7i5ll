@@ -298,14 +298,20 @@ func appendYiyeInPlace(sheetPath string, items []models.TrackItem, batch models.
 		if base > 0 {
 			f.SetCellFloat(sheet, "H"+row, base, 2, 64)
 		}
-		if it.NextOpenPct != 0 && base > 0 {
-			f.SetCellFloat(sheet, "I"+row, base*(1+it.NextOpenPct/100), 2, 64)
-		}
-		if it.NextHighPct != 0 && base > 0 {
-			f.SetCellFloat(sheet, "J"+row, base*(1+it.NextHighPct/100), 2, 64)
-		}
-		if it.NextClosePct != 0 && base > 0 {
-			f.SetCellFloat(sheet, "K"+row, base*(1+it.NextClosePct/100), 2, 64)
+		if it.SuspendNext {
+			f.SetCellStr(sheet, "I"+row, "停")
+			f.SetCellStr(sheet, "J"+row, "停")
+			f.SetCellStr(sheet, "K"+row, "停")
+		} else {
+			if it.NextOpenPct != 0 && base > 0 {
+				f.SetCellFloat(sheet, "I"+row, base*(1+it.NextOpenPct/100), 2, 64)
+			}
+			if it.NextHighPct != 0 && base > 0 {
+				f.SetCellFloat(sheet, "J"+row, base*(1+it.NextHighPct/100), 2, 64)
+			}
+			if it.NextClosePct != 0 && base > 0 {
+				f.SetCellFloat(sheet, "K"+row, base*(1+it.NextClosePct/100), 2, 64)
+			}
 		}
 		f.SetCellStr(sheet, "O"+row, nextNote(batch.TradeDate))
 		added++
@@ -507,15 +513,21 @@ func exportYiye(tplPath, outPath string, items []models.TrackItem, batch models.
 		if base > 0 {
 			f.SetCellFloat(sheet, "H"+row, base, 2, 64)
 		}
-		// I/J/K 次日开盘/最高/收盘（回填数据）；L/M/N 收益% 用公式保持模板惯例
-		if it.NextOpenPct != 0 && base > 0 {
-			f.SetCellFloat(sheet, "I"+row, base*(1+it.NextOpenPct/100), 2, 64)
-		}
-		if it.NextHighPct != 0 && base > 0 {
-			f.SetCellFloat(sheet, "J"+row, base*(1+it.NextHighPct/100), 2, 64)
-		}
-		if it.NextClosePct != 0 && base > 0 {
-			f.SetCellFloat(sheet, "K"+row, base*(1+it.NextClosePct/100), 2, 64)
+		// I/J/K 次日开盘/最高/收盘（回填数据）；[v9f.17.2] 停牌标"停"；L/M/N 收益% 用公式保持模板惯例
+		if it.SuspendNext {
+			f.SetCellStr(sheet, "I"+row, "停")
+			f.SetCellStr(sheet, "J"+row, "停")
+			f.SetCellStr(sheet, "K"+row, "停")
+		} else {
+			if it.NextOpenPct != 0 && base > 0 {
+				f.SetCellFloat(sheet, "I"+row, base*(1+it.NextOpenPct/100), 2, 64)
+			}
+			if it.NextHighPct != 0 && base > 0 {
+				f.SetCellFloat(sheet, "J"+row, base*(1+it.NextHighPct/100), 2, 64)
+			}
+			if it.NextClosePct != 0 && base > 0 {
+				f.SetCellFloat(sheet, "K"+row, base*(1+it.NextClosePct/100), 2, 64)
+			}
 		}
 		f.SetCellStr(sheet, "O"+row, nextNote(batch.TradeDate))
 		start++

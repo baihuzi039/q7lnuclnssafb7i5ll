@@ -46,11 +46,14 @@ type TrackItem struct {
 	Hold7Pct float64 `json:"hold7Pct"`
 	Hold8Pct float64 `json:"hold8Pct"`
 	// 次日细节（对照一夜表：开/高/收）
-	NextOpenPct  float64 `json:"nextOpenPct"`  // 次日开盘涨幅%
+	NextOpenPct  float64 `json:"nextOpenPct"`  // 次日开盘涨幅%（停牌时保持0，前端/写表用 SuspendNext 标"停"）
 	NextHighPct  float64 `json:"nextHighPct"`  // 次日最高涨幅%
 	NextClosePct float64 `json:"nextClosePct"` // 次日收盘涨幅%
 	FilledDays   int     `json:"filledDays"`   // 已回填天数（增量回填用）
 	Remark       string  `json:"remark" gorm:"size:255"`
+	// [v9f.17.2] 停牌标记：该持仓日个股无K线（停牌），值如 "2,5" = 第2日、第5日停牌；次日停牌时单独置 SuspendNext
+	SuspendDays string `json:"suspendDays" gorm:"size:64"`
+	SuspendNext bool   `json:"suspendNext"` // 买入次日停牌（次日开高低收无数据）
 	// ===== v9b.3: B点式口径字段（原版表格式）=====
 	DayNetPct  float64 `json:"dayNetPct"`  // 买入日: 收/开-1
 	ClosePrice float64 `json:"closePrice"` // 买入日收盘价

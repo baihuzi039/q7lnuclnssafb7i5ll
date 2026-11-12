@@ -497,9 +497,14 @@ const pctColor = (row, key) => {
 }
 
 // 上色（正确渲染 VNode；旧写法多包了一层函数导致函数源码被当字符串渲染成乱码）
+// [v9f.17.2] 停牌日显示"停"：suspendDays="2,5"=第2、5日停牌；suspendNext=次日停牌
+const holdIndex = { nextOpenPct: 0, nextHighPct: 0, nextClosePct: 0, hold1Pct: 1, hold2Pct: 2, hold3Pct: 3, hold4Pct: 4, hold5Pct: 5, hold6Pct: 6, hold7Pct: 7, hold8Pct: 8 }
 for (const k of ['nextOpenPct', 'nextHighPct', 'nextClosePct', 'hold1Pct', 'hold2Pct', 'hold3Pct', 'hold4Pct', 'hold5Pct', 'hold6Pct', 'hold7Pct', 'hold8Pct']) {
   const col = itemColumns.find(c => c.key === k)
   col.render = (row) => {
+    const dayIdx = holdIndex[k]
+    const sus = dayIdx === 0 ? (row.suspendNext && row[k] === 0) : ((row.suspendDays || '').split(',').includes(String(dayIdx)))
+    if (sus) return h('span', {style: 'color:#f0a020;fontWeight:600'}, '停')
     const v = row[k]
     const text = (v === undefined || v === null || v === 0) ? '-' : Number(v).toFixed(2)
     return h('span', {style: pctColor(row, k)}, text)

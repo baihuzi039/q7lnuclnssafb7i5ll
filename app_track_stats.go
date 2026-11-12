@@ -40,6 +40,18 @@ func tradeDaysFrom(stockCode, baseDay string, n int) ([]models.DailyKLine, bool)
 	return rows, true
 }
 
+// [v9f.17.2] marketTradingDays 全市场交易日历：取大盘股（平安601318）的K线日历作为市场基准
+// 返回 day >= baseDay 的前 n 个交易日（含 baseDay 当天，若当天为交易日）
+func marketTradingDays(baseDay string, n int) []string {
+	var rows []models.DailyKLine
+	db.Dao.Where("stock_code = ? AND day >= ?", "601318", baseDay).Order("day ASC").Limit(n).Find(&rows)
+	days := make([]string, 0, len(rows))
+	for _, r := range rows {
+		days = append(days, r.Day)
+	}
+	return days
+}
+
 // basePriceFor 买入基准价：优先手动 BuyPrice；否则买入日收盘价，
 // 若买入日非交易日（周末/节假日丢txt）则顺延到下一个交易日收盘作为基准
 func basePriceFor(item *models.TrackItem, batch models.TrackBatch) (float64, bool) {
@@ -112,20 +124,29 @@ func FillAllTrackHoldings() {
 func fillItemHoldings(item *models.TrackItem, batch models.TrackBatch) bool {
 	// [v9f] 名称走数据链：回填时顺带用东财现值刷新名称（改名/旧名自动修正，写库+名单表）
 	RefreshTrackItemName(item)
-	// [v9f.17.1] 不再跳过已填满票：全量重算保证数据完整（重算幂等，值不变不写库）；
-	// 但东财名称刷新只在未填满时做，减少请求压力
+	// [v9f.17.1] 不再跳过已填满票：全量重算保证数据完整（重算幂等，值不变不写库）
+	// [v9f.17.2] 停牌对齐：按全市场交易日历逐日对齐，个股停牌日标"停"，不挪位不空缺
 	// 取 day >= 买入日的K线：第一根为基准日（买入日，或顺延后的下一交易日），其后为持仓日
 	rows, ok := tradeDaysFrom(item.StockCode, batch.TradeDate, 9)
-	if !ok || len(rows) < 2 {
-		// 还没有可用的基准日或后续交易日：等下次补跑
-		return false
+	if !ok || len(rows) == 0 {
+		// 该股连买入日K线都没有（可能停牌）：看看全市场日历上买入日之后有没有它复牌的数据
+		var anyRow models.DailyKLine
+		if err := db.Dao.Where("stock_code = ? AND day >= ?", item.StockCode, batch.TradeDate).Order("day ASC").First(&anyRow).Error; err != nil {
+			return false // K线完全缺失，等下次同步
+		}
+		rows = []models.DailyKLine{anyRow}
 	}
 	base := rows[0].Close
 	if item.BuyPrice > 0 {
 		base = item.BuyPrice
 	}
+	// [v9f.17.2] 全市场交易日历（取任意大盘股的K线日历即可，如平安601318；库里有全部市场数据）
+	marketDays := marketTradingDays(batch.TradeDate, 9)
+	if len(marketDays) == 0 {
+		marketDays = nil
+	}
 	holdRows := rows[1:]
-	if len(holdRows) == 0 {
+	if len(holdRows) == 0 && len(marketDays) <= 1 {
 		return false
 	}
 	updated := false
@@ -146,21 +167,73 @@ func fillItemHoldings(item *models.TrackItem, batch models.TrackBatch) bool {
 			updated = true
 		}
 	}
-	for idx, r := range holdRows {
-		if idx >= len(holdSlots) {
-			break
-		}
-		setVal(holdSlots[idx], pct(r.Close))
-		if idx == 0 { // 次日细节
-			if r.Open > 0 {
-				setVal(&item.NextOpenPct, pct(r.Open))
+	// [v9f.17.2] 按全市场交易日历逐日对齐：个股某交易日无K线=停牌，标进 SuspendDays（显示"停"），不空缺不挪位
+	if len(marketDays) > 1 {
+		suspends := []string{}
+		dayIdx := 0                              // rows 内当前指针（rows[0]是买入日）
+		for mIdx, mDay := range marketDays[1:] { // 持仓日从买入日的下一交易日开始
+			if mIdx >= len(holdSlots) {
+				break
 			}
-			if r.High > 0 {
-				setVal(&item.NextHighPct, pct(r.High))
+			if dayIdx < len(holdRows) && holdRows[dayIdx].Day == mDay {
+				// 正常交易日：填数据
+				r := holdRows[dayIdx]
+				setVal(holdSlots[mIdx], pct(r.Close))
+				if mIdx == 0 {
+					if r.Open > 0 {
+						setVal(&item.NextOpenPct, pct(r.Open))
+					}
+					if r.High > 0 {
+						setVal(&item.NextHighPct, pct(r.High))
+					}
+					setVal(&item.NextClosePct, pct(r.Close))
+				}
+				dayIdx++
+			} else {
+				// 该股当天无K线 = 停牌（全天无成交）：该持仓日标"停"
+				suspends = append(suspends, itoa(mIdx+1))
 			}
-			setVal(&item.NextClosePct, pct(r.Close))
 		}
-		filled = idx + 1
+		sd := strings.Join(suspends, ",")
+		if sd != item.SuspendDays {
+			item.SuspendDays = sd
+			updated = true
+		}
+		filled = len(marketDays) - 1
+	} else {
+		// 交易日历取不到：退回旧的按个股序列填法
+		for idx, r := range holdRows {
+			if idx >= len(holdSlots) {
+				break
+			}
+			setVal(holdSlots[idx], pct(r.Close))
+			if idx == 0 {
+				if r.Open > 0 {
+					setVal(&item.NextOpenPct, pct(r.Open))
+				}
+				if r.High > 0 {
+					setVal(&item.NextHighPct, pct(r.High))
+				}
+				setVal(&item.NextClosePct, pct(r.Close))
+			}
+			filled = idx + 1
+		}
+	}
+	// [v9f.17.2] 买入次日停牌：市场有下一个交易日但该股无K线 → 次日细节标"停"
+	item.SuspendNext = false
+	if len(marketDays) > 1 {
+		nextDay := marketDays[1]
+		hasK := false
+		for _, r := range holdRows {
+			if r.Day == nextDay {
+				hasK = true
+				break
+			}
+		}
+		if !hasK {
+			item.SuspendNext = true
+			updated = true
+		}
 	}
 	if filled > item.FilledDays {
 		item.FilledDays = filled
