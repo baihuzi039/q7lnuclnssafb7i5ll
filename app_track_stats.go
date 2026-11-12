@@ -145,128 +145,92 @@ func fillItemHoldings(item *models.TrackItem, batch models.TrackBatch) bool {
 	RefreshTrackItemName(item)
 	// [v9f.17.1] 不再跳过已填满票：全量重算保证数据完整（重算幂等，值不变不写库）
 	// [v9f.17.2] 停牌对齐：按全市场交易日历逐日对齐，个股停牌日标"停"，不挪位不空缺
-	// 取 day >= 买入日的K线：第一根为基准日（买入日，或顺延后的下一交易日），其后为持仓日
-	rows, ok := tradeDaysFrom(item.StockCode, batch.TradeDate, 9)
-	if !ok || len(rows) == 0 {
-		// 该股连买入日K线都没有（可能停牌）：看看全市场日历上买入日之后有没有它复牌的数据
-		var anyRow models.DailyKLine
-		if err := db.Dao.Where("stock_code = ? AND day >= ?", item.StockCode, batch.TradeDate).Order("day ASC").First(&anyRow).Error; err != nil {
-			return false // K线完全缺失，等下次同步
-		}
-		rows = []models.DailyKLine{anyRow}
+	// [v9f.17.4] 重写对齐：不再假设该股买入日当天有K线（停牌股 rows[0]是复牌日，旧逻辑指针错位导致次日开高永远填不上）
+	// 市场日历 = 库内基准日历；个股K线逐日归位，缺K线的市场日=停牌标"停"
+	marketDays := marketTradingDays(batch.TradeDate, 10)
+	if len(marketDays) == 0 {
+		return false
 	}
-	base := rows[0].Close
+	// 个股K线：买入日（或复牌日）起
+	rows, _ := tradeDaysFrom(item.StockCode, batch.TradeDate, 10)
+	if len(rows) == 0 {
+		return false // 该股在买入日后完全没有K线（长期停牌未复牌），等下次同步
+	}
+	// 买入基准价：手动价优先；否则买入日（或复牌日）开盘价，无开盘价用收盘价
+	base := 0.0
 	if item.BuyPrice > 0 {
 		base = item.BuyPrice
+	} else if rows[0].Open > 0 {
+		base = rows[0].Open
+	} else {
+		base = rows[0].Close
 	}
-	// [v9f.17.2] 全市场交易日历（取任意大盘股的K线日历即可，如平安601318；库里有全部市场数据）
-	marketDays := marketTradingDays(batch.TradeDate, 9)
-	if len(marketDays) == 0 {
-		marketDays = nil
-	}
-	holdRows := rows[1:]
-	if len(holdRows) == 0 && len(marketDays) <= 1 {
+	if base <= 0 {
 		return false
 	}
 	updated := false
 	pct := func(px float64) float64 {
-		if base <= 0 {
-			return 0
-		}
-		return math.Round((px/base-1)*10000) / 100 // 保留2位小数
+		return math.Round((px/base-1)*10000) / 100
 	}
-	holdSlots := []*float64{&item.Hold1Pct, &item.Hold2Pct, &item.Hold3Pct, &item.Hold4Pct,
-		&item.Hold5Pct, &item.Hold6Pct, &item.Hold7Pct, &item.Hold8Pct}
-	filled := 0
-	// [v9f.17.1] 全量重算：已有值直接覆盖为新计算值（不再增量跳过），确保历史数据一次补全
-	// 幂等性：值相同时不置 updated，不产生多余写库
-	setVal := func(dst *float64, v float64) {
+	setVal2 := func(dst *float64, v float64) {
 		if *dst != v {
 			*dst = v
 			updated = true
 		}
 	}
-	// [v9f.17.2] 按全市场交易日历逐日对齐：个股某交易日无K线=停牌，标进 SuspendDays（显示"停"），不空缺不挪位
-	if len(marketDays) > 1 {
-		suspends := []string{}
-		dayIdx := 0                              // rows 内当前指针（rows[0]是买入日）
-		for mIdx, mDay := range marketDays[1:] { // 持仓日从买入日的下一交易日开始
-			if mIdx >= len(holdSlots) {
-				break
-			}
-			if dayIdx < len(holdRows) && holdRows[dayIdx].Day == mDay {
-				// 正常交易日：填数据
-				r := holdRows[dayIdx]
-				setVal(holdSlots[mIdx], pct(r.Close))
-				if mIdx == 0 {
-					if r.Open > 0 {
-						setVal(&item.NextOpenPct, pct(r.Open))
-					}
-					if r.High > 0 {
-						setVal(&item.NextHighPct, pct(r.High))
-					}
-					setVal(&item.NextClosePct, pct(r.Close))
-				}
-				dayIdx++
-			} else {
-				// 该股当天无K线 = 停牌（全天无成交）：该持仓日标"停"
-				suspends = append(suspends, itoa(mIdx+1))
-			}
+	// 个股K线按日期索引，方便按市场日历归位
+	kByDay := map[string]models.DailyKLine{}
+	for _, r := range rows {
+		kByDay[r.Day] = r
+	}
+	// 复牌晚于买入日的天数也计入停牌（买入日~复牌日前一交易日）
+	suspends := []string{}
+	for mIdx, mDay := range marketDays {
+		if mIdx == 0 {
+			continue // 买入日本身不算持仓日
 		}
-		sd := strings.Join(suspends, ",")
-		if sd != item.SuspendDays {
-			item.SuspendDays = sd
-			updated = true
+		if mIdx-1 >= 8 { // 只填持仓1~8日
+			break
 		}
-		filled = len(marketDays) - 1
-	} else {
-		// 交易日历取不到：退回旧的按个股序列填法
-		for idx, r := range holdRows {
-			if idx >= len(holdSlots) {
-				break
-			}
-			setVal(holdSlots[idx], pct(r.Close))
-			if idx == 0 {
+		if r, has := kByDay[mDay]; has {
+			slots := []*float64{&item.Hold1Pct, &item.Hold2Pct, &item.Hold3Pct, &item.Hold4Pct,
+				&item.Hold5Pct, &item.Hold6Pct, &item.Hold7Pct, &item.Hold8Pct}
+			setVal2(slots[mIdx-1], pct(r.Close))
+			if mIdx == 1 { // 次日细节：开高低收（次日=市场第2个交易日）
 				if r.Open > 0 {
-					setVal(&item.NextOpenPct, pct(r.Open))
+					setVal2(&item.NextOpenPct, pct(r.Open))
 				}
 				if r.High > 0 {
-					setVal(&item.NextHighPct, pct(r.High))
+					setVal2(&item.NextHighPct, pct(r.High))
 				}
-				setVal(&item.NextClosePct, pct(r.Close))
+				setVal2(&item.NextClosePct, pct(r.Close))
 			}
-			filled = idx + 1
+		} else {
+			suspends = append(suspends, itoa(mIdx))
 		}
 	}
-	// [v9f.17.2] 买入次日停牌：市场有下一个交易日但该股无K线 → 次日细节标"停"
-	item.SuspendNext = false
-	if len(marketDays) > 1 {
-		nextDay := marketDays[1]
-		hasK := false
-		for _, r := range holdRows {
-			if r.Day == nextDay {
-				hasK = true
-				break
-			}
-		}
-		if !hasK {
-			item.SuspendNext = true
-			updated = true
-		}
+	sd := strings.Join(suspends, ",")
+	if sd != item.SuspendDays {
+		item.SuspendDays = sd
+		updated = true
+	}
+	filled := len(marketDays) - 1
+	if filled > 8 {
+		filled = 8
 	}
 	if filled > item.FilledDays {
 		item.FilledDays = filled
 		updated = true
-	} // [v9f.17.1] 全量重算下 filled 只会≥旧值（K线只增不减），保持不变
-	// ===== v9b.3: B点式口径回填（原版表格式）=====
-	// 当日净涨跌=收/开-1; 收盘涨跌=收/前收-1; 每日最高=第N日高/前日收-1;
-	// 区间3=sum(单日1..3); 区间7=sum(单日1..7)-dayChg（口径由原版表4股精确验证）
+	}
+	// ===== v9b.3: B点式口径回填 =====
 	fillBpFields(item, batch)
 	if updated {
 		db.Dao.Save(item)
 	}
 	return updated
 }
+
+// fillItemHoldingsLegacy 旧版逻辑保留备用（未被调用，供回退参考）
 
 // fillBpFields 回填B点式字段（幂等: 已有值跳过）
 func fillBpFields(item *models.TrackItem, batch models.TrackBatch) {
