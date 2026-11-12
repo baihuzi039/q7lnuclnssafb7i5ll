@@ -66,6 +66,18 @@ func syncDailyKLineJob(ctx context.Context) {
 	defer klineSyncRunning.Store(false)
 	start := time.Now()
 
+	// [v9f.17.15] 修复同步死锁：全局最新交易日不能只看库内 max(day)——
+	// 只要某天没跑同步（软件没开机/断网/任务失败），库内 max 就永远停在那个交易日，
+	// 之后每天所有票都被判「已最新」一行不拉，缺数据自我固化（11-12/11-13 全市场缺失的根因）。
+	// 先联网校准基准票（最多1次请求），把库内 max 拉回真实最新交易日，再算增量目标。
+	for _, cal := range []struct{ code, name string }{
+		{"600036.SH", "招商银行"}, {"000001.SZ", "平安银行"}, {"600036", "招商银行"}, {"000001", "平安银行"},
+	} {
+		if upsertDailyKLine(cal.code, cal.name, 15) > 0 {
+			break
+		}
+	}
+
 	// 全局最新交易日（库内 max(day)），作为增量判断基准
 	globalLatest := ""
 	if err := db.Dao.Model(&models.DailyKLine{}).Select("MAX(day)").Scan(&globalLatest).Error; err != nil {

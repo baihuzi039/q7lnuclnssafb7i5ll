@@ -119,6 +119,16 @@ func FillBatchHoldings(batchID uint) {
 // （旧逻辑只回填 filled_days<8 的票，历史批次一旦错过就永远缺数据）
 func FillAllTrackHoldings() {
 	defer PanicHandler()
+	// [v9f.17.15] 回填前先联网校准基准票K线（最多1次请求）：日历停更时
+	// marketTradingDays 拿到的旧日历缺最新交易日，缺行检测永远检不出最新几天的缺失，
+	// 点刷新也不会补数。基准票更新后日历即时变全，逐票缺行检测/补拉才能生效。
+	for _, cal := range []struct{ code, name string }{
+		{"600036.SH", "招商银行"}, {"000001.SZ", "平安银行"}, {"600036", "招商银行"}, {"000001", "平安银行"},
+	} {
+		if upsertDailyKLine(cal.code, cal.name, 15) > 0 {
+			break
+		}
+	}
 	var batchIDs []uint
 	db.Dao.Model(&models.TrackBatch{}).Pluck("id", &batchIDs) // 不再限90天：补齐历史后一次补全
 	if len(batchIDs) == 0 {
