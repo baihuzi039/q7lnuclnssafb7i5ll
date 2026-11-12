@@ -75,6 +75,20 @@
               <!-- 均价线 + 价格线 -->
               <polyline :points="vwapPath" fill="none" stroke="#e6b800" stroke-width="1.3" />
               <polyline :points="pricePath" fill="none" stroke="#4aa3ff" stroke-width="1.6" />
+              <!-- v9f.26.1：成交量副图（通达信标准：涨红跌绿量柱） -->
+              <line :x1="CH.x0" :x2="CH.x1" :y1="VOL_AREA.y0 - 4" :y2="VOL_AREA.y0 - 4" class="axis-line" />
+              <rect
+                v-for="(b, bi) in volBars"
+                :key="'vb' + bi"
+                :x="b.x"
+                :y="b.y"
+                :width="b.w"
+                :height="b.h"
+                :fill="b.color"
+                class="vol-bar"
+              />
+              <text :x="CH.x0 - 8" :y="VOL_AREA.y0 + 12" class="axis-text hei" text-anchor="end">{{ volMaxLabel }}</text>
+              <text :x="CH.x0 - 8" :y="VOL_AREA.y1" class="axis-text hei" text-anchor="end">0</text>
               <!-- 最新价小红点 -->
               <circle v-if="lastDot" :cx="lastDot.x" :cy="lastDot.y" r="3.5" fill="#ff4d4f" class="last-dot" />
               <!-- 十字线（悬停或固定时显示） -->
@@ -349,10 +363,45 @@ function stopClock() {
 }
 
 // ==================== 图表几何（v9f.20） ====================
-const CH = { x0: 52, x1: 856, y0: 8, y1: 352 };
+const CH = { x0: 52, x1: 856, y0: 8, y1: 300 }; // v9f.26.1：主图压到300，310~352给成交量副图
+const VOL_AREA = { y0: 312, y1: 352 }; // v9f.26.1：成交量副图区
 
 const pricePath = computed(() => ptsPath("now"));
 const vwapPath = computed(() => ptsPath("avg"));
+
+// v9f.26.1：成交量副图——涨红跌绿量柱（与昨收比：高于昨收为红）
+const volBars = computed(() => {
+  const r = result.value;
+  const trend = r ? r.trend : [];
+  if (!trend || trend.length < 2) return [];
+  let vmax = 0;
+  for (const t of trend) if (t.vol > vmax) vmax = t.vol;
+  if (vmax <= 0) return [];
+  const n = trend.length;
+  const span = CH.x1 - CH.x0;
+  const bw = Math.max(1.5, span / 241 - 0.6);
+  const bars = [];
+  let prev = trend[0].now;
+  for (let i = 0; i < n; i++) {
+    const t = trend[i];
+    const off = Math.max(0, Math.min(240, minuteOffset(t.time)));
+    const x = CH.x0 + (off / 240) * span;
+    const h = Math.max(1, (t.vol / vmax) * (VOL_AREA.y1 - VOL_AREA.y0));
+    const up = t.now >= prev; // 与上一分钟比：涨红跌绿（通达信同口径）
+    bars.push({ x: x.toFixed(1), y: (VOL_AREA.y1 - h).toFixed(1), w: bw.toFixed(1), h: h.toFixed(1), color: up ? "#e04b4b" : "#22a45d" });
+    prev = t.now;
+  }
+  return bars;
+});
+const volMaxLabel = computed(() => {
+  const r = result.value;
+  const trend = r ? r.trend : [];
+  let vmax = 0;
+  for (const t of trend || []) if (t.vol > vmax) vmax = t.vol;
+  if (vmax >= 1e6) return (vmax / 1e6).toFixed(1) + "M";
+  if (vmax >= 1e3) return (vmax / 1e3).toFixed(0) + "K";
+  return String(Math.round(vmax));
+});
 
 function valueRange(trend) {
   let min = Infinity, max = -Infinity;
@@ -591,6 +640,7 @@ function onChartDblClick() {
 .chart-wrap { width: 100%; cursor: crosshair; }
 .trend-svg { width: 100%; height: auto; aspect-ratio: 860 / 400; background: #111; border-radius: 4px; display: block; }
 .grid-line { stroke: #2a2a2a; stroke-width: 1; }
+.vol-bar { opacity: 0.85; }
 .axis-line { stroke: #555; stroke-width: 1; }
 /* v9f.20：坐标全部黑体 */
 .hei { font-family: "SimHei", "Microsoft YaHei", sans-serif; }
