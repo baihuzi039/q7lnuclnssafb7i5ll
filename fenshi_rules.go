@@ -78,6 +78,15 @@ func fenshiRunRulesAdv(in fenshiRuleIn, auction *FenshiAuctionAdvice) FenshiAdvi
 	add(s*wSR, why)
 	s, why = fenshiRuleMarket(in)
 	add(s*wMkt, why)
+	// v9f.25：股笔记提炼四规则（均价线冲击次数/偏离度假强势/回调结构/强控盘）
+	s, why = fenshiRuleVwapTouch(in.Trend)
+	add(s, why)
+	s, why = fenshiRuleDeviation(in.Trend)
+	add(s, why)
+	s, why = fenshiRulePullback(in.Trend, in.PrevClose)
+	add(s, why)
+	s, why = fenshiRulePlatform(in.Trend)
+	add(s, why)
 	// 竞价共振：竞价结论与盘中同向时加权融入（±10 封顶）
 	if auction != nil && auction.Score != 0 {
 		as := auction.Score / 30 * 10 // 竞价±30 映射到 ±10
@@ -210,6 +219,7 @@ func fenshiVolBreak(t []FenshiTick) bool {
 	for _, k := range t[n-5:] {
 		r5 += k.Vol
 	}
+	r5 /= 5 // 每分钟均量，与 p20（20分钟均量）同口径比较
 	p20 := 0.0
 	for _, k := range t[n-25 : n-5] {
 		p20 += k.Vol
@@ -411,4 +421,152 @@ func fenshiAuctionEval(samples []FenshiAuctionPoint, prevClose, prevVol float64)
 		adv.Bias = "偏空"
 	}
 	return adv
+}
+
+// ==================== v9f.25 股笔记（2025-12）提炼规则 ====================
+
+// fenshiRuleVwapTouch 均价线冲击次数（股笔记 P170 + P165 事不过三）
+// 现价在均价线下方：累计受压次数，≥4 次未站上 → 弱势（-8）
+// 连续 3 次受压回调后，本次带量突破站上均价线 → 事不过三买点（+10）
+func fenshiRuleVwapTouch(t []FenshiTick) (float64, string) {
+	n := len(t)
+	if n < 20 {
+		return 0, ""
+	}
+	// 切分上穿/下穿波段：统计"从下方触及均价线回落"的受压次数
+	pressed := 0
+	above := false
+	belowRun := 0 // 突破前连续在下方运行的分钟数（过滤高频抖动）
+	for i := 1; i < n; i++ {
+		isAbove := t[i].Now > t[i].Avg
+		if isAbove && !above {
+			// 向上突破均价线
+			if pressed >= 3 && belowRun >= 3 {
+				// 事不过三：3 次受压后首次站上
+				if fenshiVolBreak(t[:i+1]) {
+					return 10, "三次受压后带量突破均价线（事不过三），转强信号"
+				}
+				return 6, "三次受压后突破均价线，但量能未放量，力度打折"
+			}
+		} else if !isAbove && above {
+			// 从上方跌回均价线下：算一次受压结束
+			pressed++
+		}
+		if isAbove {
+			belowRun = 0
+		} else {
+			belowRun++
+		}
+		above = isAbove
+	}
+	// 全程下方运行且多次受压（每次反弹到均线附近回落）
+	if pressed >= 4 {
+		return -8, fmt.Sprintf("冲击均价线 %d 次未能站上，弱势确认", pressed)
+	}
+	return 0, ""
+}
+
+// fenshiRuleDeviation 偏离度假强势（股笔记 P168/177）
+// 股价偏离均价线 >3% 且未封涨停 → 接力断层风险（-8）
+// 偏离远且近5分钟量能萎缩 → 拉升不真实（假强势，-10）
+func fenshiRuleDeviation(t []FenshiTick) (float64, string) {
+	n := len(t)
+	if n < 10 {
+		return 0, ""
+	}
+	last := t[n-1]
+	if last.Avg <= 0 {
+		return 0, ""
+	}
+	dev := (last.Now - last.Avg) / last.Avg * 100
+	if dev > 3 {
+		if n >= 25 && !fenshiVolBreak(t) {
+			return -10, fmt.Sprintf("偏离均价线 %.1f%% 且量能萎缩，拉升不真实（假强势风险）", dev)
+		}
+		return -8, fmt.Sprintf("偏离均价线 %.1f%% 且未封板，注意接力断层", dev)
+	}
+	return 0, ""
+}
+
+// fenshiRulePullback 回调结构确认（股笔记 P142 买入三法）
+// ① 高开后回落不破昨收，再上穿均价线站稳 → 承接强（+8）
+// ② 均价线附近获支撑（回踩不破）→ 上车点（+8）
+// ③ 低开 ≤-3% 后急速拉升翻红 → 主力抢筹（+10）
+// 取最新满足的一条，避免重复计分
+func fenshiRulePullback(t []FenshiTick, prevClose float64) (float64, string) {
+	n := len(t)
+	if n < 20 || prevClose <= 0 {
+		return 0, ""
+	}
+	// ③ 低开抢筹：首根 K 低开≤-3% 且现价已翻红（高于昨收）
+	first := t[0]
+	last := t[n-1]
+	if first.Now > 0 && first.Now < prevClose && (first.Now-prevClose)/prevClose*100 <= -3 {
+		if last.Now > prevClose {
+			return 10, "低开后急速拉升翻红，主力逢低抢筹迹象"
+		}
+	}
+	// ① 高开回落不破昨收后上穿均价线
+	if n >= 30 {
+		mid := t[n/3] // 早盘中段
+		if t[0].Now > prevClose && mid.Now < t[0].Now && mid.Now >= prevClose && last.Now > last.Avg {
+			return 8, "高开回落不破昨收后重新站稳均价线，承接较强"
+		}
+	}
+	// ② 均价线附近获支撑：近10分钟最低价贴近均价线（±0.3%）但未有效跌破，且现价在均线上方
+	minDev := 999.0
+	for _, k := range t[n-10:] {
+		if k.Avg <= 0 {
+			continue
+		}
+		d := (k.Now - k.Avg) / k.Avg * 100
+		if d >= -0.3 && d < minDev {
+			minDev = d
+		}
+	}
+	if minDev < 999 && last.Now > last.Avg {
+		return 8, "回调至均价线附近获支撑（回踩不破），可关注"
+	}
+	return 0, ""
+}
+
+// fenshiRulePlatform 强控盘平台（股笔记 P164-165）
+// 近30分钟振幅 <1.5% 且站稳均价线 → 高控盘；若近5分钟放量突破平台上沿 → +10
+func fenshiRulePlatform(t []FenshiTick) (float64, string) {
+	n := len(t)
+	if n < 35 {
+		return 0, ""
+	}
+	win := t[n-30:]
+	hi, lo := win[0].Now, win[0].Now
+	for _, k := range win {
+		if k.Now > hi {
+			hi = k.Now
+		}
+		if k.Now < lo {
+			klo := k.Now
+			if klo < lo {
+				lo = klo
+			}
+		}
+	}
+	if lo <= 0 {
+		return 0, ""
+	}
+	amp := (hi - lo) / lo * 100
+	last := t[n-1]
+	if amp < 1.5 && last.Now > last.Avg {
+		// 平台上沿 = 前25分钟高点
+		hi25 := t[n-25].Now
+		for _, k := range t[n-25 : n-5] {
+			if k.Now > hi25 {
+				hi25 = k.Now
+			}
+		}
+		if last.Now > hi25 && fenshiVolBreak(t) {
+			return 10, fmt.Sprintf("窄幅横盘（振幅%.1f%%）后放量突破平台上沿，高控盘启动", amp)
+		}
+		return 4, fmt.Sprintf("窄幅横盘（振幅%.1f%%）站稳均价线，高控盘迹象，等放量突破", amp)
+	}
+	return 0, ""
 }
