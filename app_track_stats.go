@@ -152,10 +152,40 @@ func fillItemHoldings(item *models.TrackItem, batch models.TrackBatch) bool {
 	if len(marketDays) == 0 {
 		return false
 	}
-	// 个股K线：买入日（或复牌日）起，同样扩到30根，保证停牌也不缺尾部
+	// 个股K线：买入日（或复牌日）起，30根窗口
 	rows, _ := tradeDaysFrom(item.StockCode, batch.TradeDate, 30)
 	if len(rows) == 0 {
-		return false // 该股在买入日后完全没有K线（长期停牌未复牌），等下次同步
+		// [v9f.17.7] 当场重拉：库内完全没有该股买入日后的K线 → 直接拉东财补数，拉到即刻重取
+		if n := upsertDailyKLine(item.StockCode, item.StockName, 60); n > 0 {
+			logger.SugaredLogger.Infof("回填补拉K线 %s: 新增%d行", item.StockCode, n)
+			rows, _ = tradeDaysFrom(item.StockCode, batch.TradeDate, 30)
+		}
+		if len(rows) == 0 {
+			return false // 重拉仍无数据（长期停牌未复牌）
+		}
+	}
+	// [v9f.17.7] 个股K线按日期索引（先建索引，后续缺行检测与对齐都用）
+	kByDay := map[string]models.DailyKLine{}
+	for _, r := range rows {
+		kByDay[r.Day] = r
+	}
+	// [v9f.17.7] 缺中间行检测：市场日历上买日后有交易日但个股K线不够 → 当场重拉补齐
+	needRefetch := false
+	for _, mDay := range marketDays {
+		if _, has := kByDay[mDay]; !has {
+			needRefetch = true
+			break
+		}
+	}
+	if needRefetch {
+		if n := upsertDailyKLine(item.StockCode, item.StockName, 60); n > 0 {
+			logger.SugaredLogger.Infof("回填补拉K线(缺中间行) %s: 新增%d行", item.StockCode, n)
+			rows, _ = tradeDaysFrom(item.StockCode, batch.TradeDate, 30)
+			kByDay = map[string]models.DailyKLine{}
+			for _, r := range rows {
+				kByDay[r.Day] = r
+			}
+		}
 	}
 	// 买入基准价：手动价优先；否则买入日（或复牌日）开盘价，无开盘价用收盘价
 	base := 0.0
@@ -178,11 +208,6 @@ func fillItemHoldings(item *models.TrackItem, batch models.TrackBatch) bool {
 			*dst = v
 			updated = true
 		}
-	}
-	// 个股K线按日期索引，方便按市场日历归位
-	kByDay := map[string]models.DailyKLine{}
-	for _, r := range rows {
-		kByDay[r.Day] = r
 	}
 	// 复牌晚于买入日的天数也计入停牌（买入日~复牌日前一交易日）
 	suspends := []string{}

@@ -291,6 +291,21 @@ func (a *App) SyncDailyKLineNow() string {
 // GetDailyKLineSyncStatus 查询日线库状态（分类计数：A股股票/ETF/其他，避免把基金债券算进股票数）
 // [v9f.3] 切页卡顿优化：重聚合部分用60秒缓存（Running/LastSyncTime 始终实时）；
 // 同步完成/导入完成事件调 InvalidateKlineStatusCache 强刷
+// KlineHealthCheck [v9f.17.8] 数据体检：总行数/股票数/日期范围/坏行数，直接返回报告文本（前端弹窗显示）
+func (a *App) KlineHealthCheck() string {
+	defer PanicHandler()
+	var total, codes, bad int64
+	var minDay, maxDay string
+	db.Dao.Model(&models.DailyKLine{}).Count(&total)
+	db.Dao.Model(&models.DailyKLine{}).Distinct("stock_code").Count(&codes)
+	db.Dao.Model(&models.DailyKLine{}).Select("MIN(day), MAX(day)").Row().Scan(&minDay, &maxDay)
+	db.Dao.Model(&models.DailyKLine{}).Where("open = 0 OR close = 0 OR high = 0").Count(&bad)
+	return fmt.Sprintf(
+		"数据库体检结果：\n总行数: %d\n股票数: %d\n日期范围: %s ~ %s\n坏行(open/close/high为0): %d\n\n%s",
+		total, codes, minDay, maxDay, bad,
+		map[bool]string{true: "✔ 库健康，之前缺数据是回填逻辑问题，v9f.17.7 已修，点刷新即可补全", false: "⚠ 有坏行：点「接口同步增量」，同步会自动强制重拉这些票，完成后重新体检应归零"}[bad == 0])
+}
+
 func (a *App) GetDailyKLineSyncStatus() models.DailyKLineSyncStatus {
 	defer PanicHandler()
 	now := time.Now().Unix()

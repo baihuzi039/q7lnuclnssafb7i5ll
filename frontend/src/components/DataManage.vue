@@ -39,6 +39,7 @@
           </n-button>
           <n-button size="small" type="info" ghost @click="snapAuction">抓今日竞价快照</n-button>
           <n-button size="small" type="warning" ghost @click="exportBackup">导出数据库备份</n-button>
+          <n-button size="small" type="error" ghost :loading="healthChecking" @click="healthCheck">数据体检</n-button>
           <n-button size="small" @click="loadStatus">刷新状态</n-button>
         </n-space>
         <n-text depth="3" style="font-size: 12px;">
@@ -124,6 +125,23 @@ function loadStatus() {
 function syncNow() {
   status.value.running = true
   SyncDailyKLineNow().then((res) => { if (window.$message) window.$message.info(res) })
+}
+
+// [v9f.17.8] 数据体检：总行数/股票数/日期范围/坏行数，弹窗直报
+const healthChecking = ref(false)
+function healthCheck() {
+  healthChecking.value = true
+  window.go.main.App.KlineHealthCheck().then((res) => {
+    healthChecking.value = false
+    if (window.$dialog) {
+      window.$dialog.info({ title: '数据库体检', content: res, positiveText: '知道了' })
+    } else {
+      alert(res)
+    }
+  }).catch((e) => {
+    healthChecking.value = false
+    if (window.$message) window.$message.error('体检失败: ' + e)
+  })
 }
 
 const exporting = ref(false)

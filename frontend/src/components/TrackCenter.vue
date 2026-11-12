@@ -523,9 +523,8 @@ function loadStrategies() {
 
 function onSwitchStrategy() {
   checkedBatches.value = []
-  // [v9f.14] 切策略时清空查询展示并加载该策略自己的查询状态（互不串批次）
-  queryRows.value = []
-  queryBatchIds.value = []
+  // [v9f.17.7] 修时序bug：先存当前策略状态，再切 key，再加载新策略状态（旧顺序先用新 key 加载又被清空覆盖，导致切回来批次丢失）
+  saveQueryState()
   const q = loadQueryState()
   queryRows.value = q.rows || []
   queryBatchIds.value = q.batchIds || []
