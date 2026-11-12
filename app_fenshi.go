@@ -162,6 +162,7 @@ func fenshiAnalyzeFromTencent(stockCode string) (*FenshiAnalysisResult, error) {
 	var trend []FenshiTick
 
 	firstPx := 0.0
+	cumPrev := 0.0 // v9f.26.2：上一分钟累计量（差分用）
 	for _, r := range rows {
 		line, _ := r.(string)
 		fs := strings.Fields(line)
@@ -175,10 +176,16 @@ func fenshiAnalyzeFromTencent(stockCode string) (*FenshiAnalysisResult, error) {
 		if len(t) == 4 {
 			t = t[:2] + ":" + t[2:]
 		}
+		// v9f.26.2 重大修复：fs[2]是"逐分钟递增的累计量"（实测递增），必须差分出单分钟量
+		// 之前直接当分钟量用 → 量柱成阶梯形、volBreak放量判定恒真
 		pv := cv * 100
+		if cumPrev > 0 && cv > cumPrev {
+			pv = (cv - cumPrev) * 100
+		}
+		cumPrev = cv
 		avg := 0.0
-		if pv > 0 {
-			avg = ca / pv
+		if ca > 0 && cv > 0 {
+			avg = ca / (cv * 100) // VWAP 用累计口径算（正确）
 		}
 		if firstPx == 0 {
 			firstPx = px
