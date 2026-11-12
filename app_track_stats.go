@@ -147,12 +147,13 @@ func fillItemHoldings(item *models.TrackItem, batch models.TrackBatch) bool {
 	// [v9f.17.2] 停牌对齐：按全市场交易日历逐日对齐，个股停牌日标"停"，不挪位不空缺
 	// [v9f.17.4] 重写对齐：不再假设该股买入日当天有K线（停牌股 rows[0]是复牌日，旧逻辑指针错位导致次日开高永远填不上）
 	// 市场日历 = 库内基准日历；个股K线逐日归位，缺K线的市场日=停牌标"停"
-	marketDays := marketTradingDays(batch.TradeDate, 10)
+	// [v9f.17.6] 窗口 10→30：停牌时个股K线比市场日少，10根不够覆盖 8 个持仓日 → 尾部持仓日被误判缺失（v9f.17.5“缺失更多”的根因）
+	marketDays := marketTradingDays(batch.TradeDate, 30)
 	if len(marketDays) == 0 {
 		return false
 	}
-	// 个股K线：买入日（或复牌日）起
-	rows, _ := tradeDaysFrom(item.StockCode, batch.TradeDate, 10)
+	// 个股K线：买入日（或复牌日）起，同样扩到30根，保证停牌也不缺尾部
+	rows, _ := tradeDaysFrom(item.StockCode, batch.TradeDate, 30)
 	if len(rows) == 0 {
 		return false // 该股在买入日后完全没有K线（长期停牌未复牌），等下次同步
 	}
@@ -223,6 +224,22 @@ func fillItemHoldings(item *models.TrackItem, batch models.TrackBatch) bool {
 		updated = true
 	}
 	filled := len(marketDays) - 1
+	if filled > 8 {
+		filled = 8
+	}
+	// [v9f.17.6] FilledDays 不再被尾部误判压低：取实际有K线的最大持仓日
+	maxReal := 0
+	for mIdx, mDay := range marketDays {
+		if mIdx == 0 {
+			continue
+		}
+		if _, has := kByDay[mDay]; has && mIdx > maxReal {
+			maxReal = mIdx
+		}
+	}
+	if maxReal > filled {
+		filled = maxReal
+	}
 	if filled > 8 {
 		filled = 8
 	}
