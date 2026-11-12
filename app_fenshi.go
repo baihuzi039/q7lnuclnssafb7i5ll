@@ -178,8 +178,10 @@ func fenshiAnalyzeFromTencent(stockCode string) (*FenshiAnalysisResult, error) {
 		}
 		// v9f.26.2 重大修复：fs[2]是"逐分钟递增的累计量"（实测递增），必须差分出单分钟量
 		// 之前直接当分钟量用 → 量柱成阶梯形、volBreak放量判定恒真
+		// v9f.26.7 修复：cv == cumPrev（该分钟无成交）时差分应为 0；
+		// 之前用 cv > cumPrev 导致平盘分钟走不到差分分支，把当日累计量整根当成分钟量 → 满图凭空巨量柱
 		pv := cv * 100
-		if cumPrev > 0 && cv > cumPrev {
+		if cumPrev > 0 && cv >= cumPrev {
 			pv = (cv - cumPrev) * 100
 		}
 		cumPrev = cv
