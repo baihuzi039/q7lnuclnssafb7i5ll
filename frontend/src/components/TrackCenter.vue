@@ -599,13 +599,18 @@ function saveQueryState() {
       start: backfillStart.value, end: backfillEnd.value,
       rows: queryRows.value, batchIds: queryBatchIds.value
     }))
-  } catch {}
+    console.log('[trackQuery] 已保存 key=', lsKey(), 'rows=', queryRows.value.length)
+  } catch (e) {
+    console.error('[trackQuery] 保存失败(可能超出localStorage容量):', e)
+  }
 }
 const _qs = loadQueryState()
+console.log('[trackQuery] 恢复检查 key=', lsKey(), '存了:', JSON.stringify(Object.keys(_qs)), 'rows=', (_qs.rows||[]).length, 'start=', _qs.start, 'end=', _qs.end)
 const backfillStart = ref(_qs.start || Date.now() - 10*86400000)
 const backfillEnd = ref(_qs.end || Date.now())
 const queryRows = ref(_qs.rows || [])
 const queryBatchIds = ref(_qs.batchIds || [])
+
 async function doBackfill() {
   const st = (strategies.value || []).find(s => String(s.id) === String(activeStrategy.value))
   if (!st) return
@@ -752,6 +757,15 @@ function delCheckedBatches() {
 }
 
 onMounted(() => {
+  // [v9f.17.8b] 挂载后二次恢复查询状态（防 setup 阶段时序问题）
+  setTimeout(() => {
+    const q2 = loadQueryState()
+    if ((q2.rows || []).length && !queryRows.value.length) {
+      queryRows.value = q2.rows
+      queryBatchIds.value = q2.batchIds || []
+      console.log('[trackQuery] 挂载二次恢复 rows=', q2.rows.length)
+    }
+  }, 300)
   loadStrategies()
   EventsOn('dailyKLineSyncDone', () => { refresh() })
 })
