@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"go-stock/backend/data"
 	"go-stock/backend/db"
 	"go-stock/backend/logger"
 	"go-stock/backend/models"
@@ -38,6 +39,15 @@ func tradeDaysFrom(stockCode, baseDay string, n int) ([]models.DailyKLine, bool)
 		return nil, false
 	}
 	return rows, true
+}
+
+// [v9f.17.14] localNameFor 从本地名单表查当前名称（零网络开销，回填提速用）
+func localNameFor(stockCode string) string {
+	var b data.StockBasic
+	if err := db.Dao.Where("ts_code LIKE ?", stockCode6(stockCode)+"%").First(&b).Error; err != nil {
+		return ""
+	}
+	return b.Name
 }
 
 // [v9f.17.2] marketTradingDays 全市场交易日历：取一只大盘蓝筹的K线日历作为市场基准
@@ -116,6 +126,13 @@ func FillAllTrackHoldings() {
 	}
 	var items []models.TrackItem
 	db.Dao.Where("batch_id IN ?", batchIDs).Find(&items) // 全量重算，fillItemHoldings 内部幂等
+	// [v9f.17.14] 批次对象预取（原来循环内逐票First查200+次DB，改1次全取）
+	var allBatches []models.TrackBatch
+	db.Dao.Find(&allBatches)
+	batchMap := make(map[uint]models.TrackBatch, len(allBatches))
+	for _, b := range allBatches {
+		batchMap[b.ID] = b
+	}
 	filled := 0
 	failed := []string{}
 	logger.SugaredLogger.Infof("回填开始: 共%d批次 %d只票", len(batchIDs), len(items))
@@ -123,8 +140,8 @@ func FillAllTrackHoldings() {
 		if (i+1)%20 == 0 {
 			logger.SugaredLogger.Infof("回填进度: %d/%d", i+1, len(items))
 		}
-		var batch models.TrackBatch
-		if err := db.Dao.First(&batch, items[i].BatchID).Error; err != nil {
+		batch, ok := batchMap[items[i].BatchID]
+		if !ok {
 			continue
 		}
 		didUpdate := false
@@ -158,8 +175,11 @@ func FillAllTrackHoldings() {
 
 // fillItemHoldings 单票增量回填；返回是否有更新
 func fillItemHoldings(item *models.TrackItem, batch models.TrackBatch) bool {
-	// [v9f] 名称走数据链：回填时顺带用东财现值刷新名称（改名/旧名自动修正，写库+名单表）
-	RefreshTrackItemName(item)
+	// [v9f.17.14] 回填提速：逐票名称HTTP（每股1请求×几百票=几分钟卡在这是主因）改为——只在名称疑似过期时才请求：
+	// 批次建好后名称基本不变，改用「名单表名称」对比（本地零开销），不一致才调东财确认
+	if n := localNameFor(item.StockCode); n != "" && n != item.StockName {
+		RefreshTrackItemName(item) // 名单表与批次明细不一致，才走网络校准
+	}
 	// [v9f.17.1] 不再跳过已填满票：全量重算保证数据完整（重算幂等，值不变不写库）
 	// [v9f.17.2] 停牌对齐：按全市场交易日历逐日对齐，个股停牌日标"停"，不挪位不空缺
 	// [v9f.17.4] 重写对齐：不再假设该股买入日当天有K线（停牌股 rows[0]是复牌日，旧逻辑指针错位导致次日开高永远填不上）
