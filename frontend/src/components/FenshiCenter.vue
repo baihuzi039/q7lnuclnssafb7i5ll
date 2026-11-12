@@ -36,16 +36,14 @@
               <div class="limit-label">最高加价</div>
               <div class="limit-val" :key="'b' + result.price">{{ (result.price * 1.02).toFixed(2) }}</div>
             </div>
-            <div class="chart-title">
-              <span class="title-name">{{ result.name }}</span>
-              <span class="title-code">（{{ stripPrefix(result.code) }}）</span>
-            </div>
             <div class="limit-box sell">
               <div class="limit-label">最高让价</div>
               <div class="limit-val" :key="'s' + result.price">{{ (result.price * 0.98).toFixed(2) }}</div>
             </div>
             <div class="quote-line">
               <div class="live-price-row">
+                <span class="title-name">{{ result.name }}</span>
+                <span class="title-code">（{{ stripPrefix(result.code) }}）</span>
                 <span class="live-price" :class="result.changePct >= 0 ? 'up' : 'down'" :key="result.price">{{ result.price.toFixed(2) }}</span>
                 <span class="live-pct" :class="result.changePct >= 0 ? 'up' : 'down'" :key="result.changePct">{{ result.changePct >= 0 ? '+' : '' }}{{ result.changePct.toFixed(2) }}%</span>
               </div>
@@ -528,7 +526,7 @@ function onChartDblClick() {
 .add-msg.err { color: #e04b4b; }
 /* v9f.20.3：三栏 grid（1fr auto 1fr），中栏真居中，左右栏各自独立永不重叠 */
 /* v9f.23.4：五栏 grid——时钟 | 加价框 | 名称 | 让价框 | 行情 */
-.top-row { display: grid; grid-template-columns: auto auto 1fr auto auto; align-items: center; gap: 14px; margin-bottom: 6px; }
+.top-row { display: grid; grid-template-columns: auto auto 1fr auto; align-items: center; gap: 14px; margin-bottom: 6px; }
 .limit-box { border: 1px solid #666; border-radius: 4px; padding: 2px 10px; text-align: center; min-width: 96px; }
 .limit-box.buy { border-color: rgba(224,75,75,.6); }
 .limit-box.sell { border-color: rgba(34,164,93,.6); }
@@ -544,8 +542,10 @@ function onChartDblClick() {
 .quote-line .dim { margin-left: 0; color: #d1e7ff; display: block; }
 /* v9f.23.2：实时价格通达信化——昨收0%红涨绿跌，与名称同字号，变动轻微闪烁 */
 .live-price-row { display: flex; justify-content: flex-end; align-items: baseline; gap: 8px; }
+.live-price-row .title-name { font-size: 26px; font-weight: 700; color: #ffd700; }
+.live-price-row .title-code { font-size: 14px; color: #ffd700; }
 .live-price { font-size: 26px; font-weight: bold; font-family: "Microsoft YaHei", "SimHei", sans-serif; }
-.live-pct { font-size: 26px; font-weight: bold; font-family: "Microsoft YaHei", "SimHei", sans-serif; }
+.live-pct { font-size: 15px; font-weight: bold; font-family: "Microsoft YaHei", "SimHei", sans-serif; }
 @keyframes price-blink {
   0% { opacity: 1; }
   50% { opacity: 0.55; }
