@@ -117,17 +117,30 @@ func FillAllTrackHoldings() {
 	var items []models.TrackItem
 	db.Dao.Where("batch_id IN ?", batchIDs).Find(&items) // 全量重算，fillItemHoldings 内部幂等
 	filled := 0
+	failed := []string{}
 	for i := range items {
 		var batch models.TrackBatch
 		if err := db.Dao.First(&batch, items[i].BatchID).Error; err != nil {
 			continue
 		}
-		if fillItemHoldings(&items[i], batch) {
+		didUpdate := false
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					logger.SugaredLogger.Errorf("回填单票panic %s(批次%s): %v", items[i].StockCode, batch.TradeDate, r)
+					failed = append(failed, items[i].StockCode+"(panic)")
+				}
+			}()
+			didUpdate = fillItemHoldings(&items[i], batch)
+		}()
+		if didUpdate {
 			filled++
+		} else {
+			failed = append(failed, items[i].StockCode+"@"+batch.TradeDate)
 		}
 	}
-	if filled > 0 {
-		logger.SugaredLogger.Infof("批次涨幅回填完成，更新 %d 只", filled)
+	logger.SugaredLogger.Infof("批次涨幅回填完成: 更新%d只 / 未变化或失败%d只 [%s]", filled, len(failed), strings.Join(failed, ","))
+	{
 		// [v9f.16] 回填后自动同步回测表：数据更新到哪，表就自动追到哪（幂等，无新增则不写盘）
 		for _, name := range []string{"一夜持股", "牛指T+1"} {
 			var st models.TrackStrategy

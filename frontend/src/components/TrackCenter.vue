@@ -152,7 +152,7 @@
 </template>
 
 <script setup>
-import {onBeforeUnmount, onMounted, ref, h, computed} from 'vue'
+import {onBeforeUnmount, onMounted, ref, h, computed, watch} from 'vue'
 import {
   ListTrackStrategies, AddTrackStrategy, DelTrackStrategy, GetTrackBatches,
   GetRecentTrackItems, GetTrackStats, CreateTrackBatch, ImportTrackInboxFolder,
@@ -263,6 +263,9 @@ const showOvernightModal = ref(false)
 const overnightModalTitle = ref('一夜选股结果')
 const overnightScan = ref(null)   // 结构化结果(RunOvernightScanJSON)
 const overnightDateTs = ref(Date.now())
+// [v9f.17.10] 选股日期也持久化（切模块回来不重置）
+watch(overnightDateTs, (v) => { try { localStorage.setItem('trackOvernightDate', String(v)) } catch {} })
+try { const _od = localStorage.getItem('trackOvernightDate'); if (_od) overnightDateTs.value = Number(_od) || overnightDateTs.value } catch {}
 const isOvernightTab = computed(() => {
   const s = strategies.value.find(x => String(x.id) === activeStrategy.value)
   return !!s && /一夜/.test(s.name || '')
@@ -546,7 +549,7 @@ function refresh() {
   const id = Number(activeStrategy.value)
   window.go.main.App.FillAllTrackHoldings().then(() => {
     GetTrackBatches(id).then((res) => { batches.value = res || [] })
-    GetRecentTrackItems(id, 200).then((res) => { items.value = res || [] })
+    GetRecentTrackItems(id, 500).then((res) => { items.value = res || [] })
     GetTrackStats().then((res) => {
       stat.value = (res || []).find(s => String(s.strategyId) === activeStrategy.value) || {}
     })
@@ -608,6 +611,8 @@ const _qs = loadQueryState()
 console.log('[trackQuery] 恢复检查 key=', lsKey(), '存了:', JSON.stringify(Object.keys(_qs)), 'rows=', (_qs.rows||[]).length, 'start=', _qs.start, 'end=', _qs.end)
 const backfillStart = ref(_qs.start || Date.now() - 10*86400000)
 const backfillEnd = ref(_qs.end || Date.now())
+// [v9f.17.10] 日期范围改动即存（不等查询）：用户选完日期切模块，回来必须还是选的日期
+watch([backfillStart, backfillEnd], () => { saveQueryState() })
 const queryRows = ref(_qs.rows || [])
 const queryBatchIds = ref(_qs.batchIds || [])
 
