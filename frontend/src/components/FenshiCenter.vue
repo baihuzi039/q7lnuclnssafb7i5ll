@@ -54,7 +54,7 @@
             @click="onChartClick"
             @dblclick="onChartDblClick"
           >
-            <svg class="trend-svg" viewBox="0 0 1360 560" preserveAspectRatio="none">
+            <svg class="trend-svg" viewBox="0 0 1360 640" preserveAspectRatio="none">
               <!-- 横向网格 + 纵轴刻度（黑体） -->
               <g v-for="(g, gi) in gridLines" :key="'g' + gi">
                 <line :x1="CH.x0" :x2="CH.x1" :y1="g.y" :y2="g.y" class="grid-line" />
@@ -364,8 +364,8 @@ function stopClock() {
 }
 
 // ==================== 图表几何（v9f.20） ====================
-const CH = { x0: 56, x1: 1356, y0: 8, y1: 420 }; // v9f.26.6：铺满屏宽1360，主图420（振幅大时纵坐标自适应拉开）
-const VOL_AREA = { y0: 420, y1: 520 }; // v9f.26.6：量柱区100px与主图连体（无间隔），时间轴在下方
+const CH = { x0: 56, x1: 1356, y0: 8, y1: 420 }; // v9f.26.8：铺满屏宽1360，主图420
+const VOL_AREA = { y0: 460, y1: 560 }; // v9f.26.8：量柱区整体下移，与主图拉开40px，时间轴在下方
 
 const pricePath = computed(() => ptsPath("now"));
 const vwapPath = computed(() => ptsPath("avg"));
@@ -643,7 +643,7 @@ function onChartDblClick() {
 .clock-time { line-height: 1.1; display: block; font-family: "Microsoft YaHei", "SimHei", sans-serif; font-size: 30px; font-weight: 700; color: #00e5a0; letter-spacing: 2px; font-variant-numeric: tabular-nums; text-shadow: 0 0 12px rgba(0,229,160,.45); }
 .clock-date { font-size: 12px; color: #7ea8a0; }
 .chart-wrap { width: 100%; cursor: crosshair; }
-.trend-svg { width: 100%; height: auto; aspect-ratio: 1360 / 560; background: #111; border-radius: 4px; display: block; }
+.trend-svg { width: 100%; height: auto; aspect-ratio: 1360 / 640; background: #111; border-radius: 4px; display: block; }
 .grid-line { stroke: #2a2a2a; stroke-width: 1; }
 .vol-bar { opacity: 0.85; }
 .axis-line { stroke: #555; stroke-width: 1; }

@@ -1521,8 +1521,14 @@ window.onerror = function (msg, source, lineno, colno, error) {
   return true;
 };
 
+// v9f.26.9：底部右下角分时模块版本号（tag 由 CI ldflags 注入 Version，如 26.9-fenshi-release）
+const fenshiVersionText = ref("")
+
 onBeforeMount(() => {
   GetVersionInfo().then(result => {
+    if (result.version && result.version.includes("fenshi")) {
+      fenshiVersionText.value = "v" + result.version.replace("-release", "")
+    }
     if(result.officialStatement){
       content.value = result.officialStatement+"\n\n"+content.value
     }
@@ -1809,13 +1815,16 @@ onMounted(() => {
                   </n-gi>
                   <n-gi style="position: fixed;bottom:0;z-index: 9;width: 100%;">
                     <n-card size="small" style="--wails-draggable:no-drag">
-                      <n-menu style="font-size: 18px;"
-                              v-model:value="activeKey"
-                              mode="horizontal"
-                              :options="menuOptions"
-                              :dropdown-props="{ menuProps: () => ({ style: 'max-height: 60vh; overflow-y: auto;' }) }"
-                              responsive
-                      />
+                      <div style="display: flex; align-items: center;">
+                        <n-menu style="font-size: 18px; flex: 1;"
+                                v-model:value="activeKey"
+                                mode="horizontal"
+                                :options="menuOptions"
+                                :dropdown-props="{ menuProps: () => ({ style: 'max-height: 60vh; overflow-y: auto;' }) }"
+                                responsive
+                        />
+                        <span v-if="fenshiVersionText" style="margin-left: 12px; margin-right: 8px; color: #7ee0b8; font-size: 12px; font-weight: 700; white-space: nowrap;">分时模块：{{ fenshiVersionText }}</span>
+                      </div>
                     </n-card>
                   </n-gi>
                 </n-grid>
