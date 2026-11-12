@@ -74,18 +74,17 @@ func FillBatchHoldings(batchID uint) {
 	}
 }
 
-// FillAllTrackHoldings 全量补涨：每日17:40同步后调用，对所有未填满批次的票增量回填
+// FillAllTrackHoldings [v9f.17.1] 全量幂等回填：每天对所有批次重算，已收盘日期的数据当场补全
+// （旧逻辑只回填 filled_days<8 的票，历史批次一旦错过就永远缺数据）
 func FillAllTrackHoldings() {
 	defer PanicHandler()
 	var batchIDs []uint
-	// 只取最近90天批次（更早的不再变化，避免每次全库扫描）
-	cutoff := time.Now().AddDate(0, 0, -90).Format("2006-01-02")
-	db.Dao.Model(&models.TrackBatch{}).Where("trade_date >= ?", cutoff).Pluck("id", &batchIDs)
+	db.Dao.Model(&models.TrackBatch{}).Pluck("id", &batchIDs) // 不再限90天：补齐历史后一次补全
 	if len(batchIDs) == 0 {
 		return
 	}
 	var items []models.TrackItem
-	db.Dao.Where("batch_id IN ? AND filled_days < 8", batchIDs).Find(&items)
+	db.Dao.Where("batch_id IN ?", batchIDs).Find(&items) // 全量重算，fillItemHoldings 内部幂等
 	filled := 0
 	for i := range items {
 		var batch models.TrackBatch
@@ -113,11 +112,8 @@ func FillAllTrackHoldings() {
 func fillItemHoldings(item *models.TrackItem, batch models.TrackBatch) bool {
 	// [v9f] 名称走数据链：回填时顺带用东财现值刷新名称（改名/旧名自动修正，写库+名单表）
 	RefreshTrackItemName(item)
-	// 已填满则跳过
-	if item.FilledDays >= 8 {
-		// 次日细节只填一次
-		return false
-	}
+	// [v9f.17.1] 不再跳过已填满票：全量重算保证数据完整（重算幂等，值不变不写库）；
+	// 但东财名称刷新只在未填满时做，减少请求压力
 	// 取 day >= 买入日的K线：第一根为基准日（买入日，或顺延后的下一交易日），其后为持仓日
 	rows, ok := tradeDaysFrom(item.StockCode, batch.TradeDate, 9)
 	if !ok || len(rows) < 2 {
@@ -133,12 +129,6 @@ func fillItemHoldings(item *models.TrackItem, batch models.TrackBatch) bool {
 		return false
 	}
 	updated := false
-	setIf := func(dst *float64, v float64) {
-		if *dst == 0 && v != 0 {
-			*dst = v
-			updated = true
-		}
-	}
 	pct := func(px float64) float64 {
 		if base <= 0 {
 			return 0
@@ -148,29 +138,34 @@ func fillItemHoldings(item *models.TrackItem, batch models.TrackBatch) bool {
 	holdSlots := []*float64{&item.Hold1Pct, &item.Hold2Pct, &item.Hold3Pct, &item.Hold4Pct,
 		&item.Hold5Pct, &item.Hold6Pct, &item.Hold7Pct, &item.Hold8Pct}
 	filled := 0
-	for idx, r := range holdRows {
-		if idx < item.FilledDays {
-			continue // 增量：跳过已回填的交易日
+	// [v9f.17.1] 全量重算：已有值直接覆盖为新计算值（不再增量跳过），确保历史数据一次补全
+	// 幂等性：值相同时不置 updated，不产生多余写库
+	setVal := func(dst *float64, v float64) {
+		if *dst != v {
+			*dst = v
+			updated = true
 		}
+	}
+	for idx, r := range holdRows {
 		if idx >= len(holdSlots) {
 			break
 		}
-		setIf(holdSlots[idx], pct(r.Close))
+		setVal(holdSlots[idx], pct(r.Close))
 		if idx == 0 { // 次日细节
 			if r.Open > 0 {
-				setIf(&item.NextOpenPct, pct(r.Open))
+				setVal(&item.NextOpenPct, pct(r.Open))
 			}
 			if r.High > 0 {
-				setIf(&item.NextHighPct, pct(r.High))
+				setVal(&item.NextHighPct, pct(r.High))
 			}
-			setIf(&item.NextClosePct, pct(r.Close))
+			setVal(&item.NextClosePct, pct(r.Close))
 		}
 		filled = idx + 1
 	}
 	if filled > item.FilledDays {
 		item.FilledDays = filled
 		updated = true
-	}
+	} // [v9f.17.1] 全量重算下 filled 只会≥旧值（K线只增不减），保持不变
 	// ===== v9b.3: B点式口径回填（原版表格式）=====
 	// 当日净涨跌=收/开-1; 收盘涨跌=收/前收-1; 每日最高=第N日高/前日收-1;
 	// 区间3=sum(单日1..3); 区间7=sum(单日1..7)-dayChg（口径由原版表4股精确验证）

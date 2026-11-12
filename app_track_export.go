@@ -284,6 +284,10 @@ func appendYiyeInPlace(sheetPath string, items []models.TrackItem, batch models.
 		f.SetCellStr(sheet, "D"+row, boardName(it.StockCode))
 		if it.Score != "" {
 			f.SetCellStr(sheet, "G"+row, it.Score)
+			f.SetCellStr(sheet, "E"+row, it.Score) // [v9f.17.1] E列v3评分同步（原版表两列同源）
+		}
+		if it.Remark != "" {
+			f.SetCellStr(sheet, "F"+row, it.Remark) // [v9f.17.1] F列标记（严/★）
 		}
 		base := it.BuyPrice
 		if base <= 0 {
@@ -485,9 +489,13 @@ func exportYiye(tplPath, outPath string, items []models.TrackItem, batch models.
 		f.SetCellStr(sheet, "B"+row, stockCode6(it.StockCode))
 		f.SetCellStr(sheet, "C"+row, it.StockName)
 		f.SetCellStr(sheet, "D"+row, boardName(it.StockCode))
-		// E v3评分（txt未提供则留空）；G 评分
+		// E v3评分（txt未提供则留空）；G 评分；[v9f.17.1] E列同步+ F列标记
 		if it.Score != "" {
 			f.SetCellStr(sheet, "G"+row, it.Score)
+			f.SetCellStr(sheet, "E"+row, it.Score)
+		}
+		if it.Remark != "" {
+			f.SetCellStr(sheet, "F"+row, it.Remark)
 		}
 		// H 买入价（手动价优先，否则买入日/顺延日收盘）
 		base := it.BuyPrice
@@ -669,11 +677,22 @@ func (a *App) BackfillTrackRange(strategyName, startDate, endDate string) string
 				notes = append(notes, day+":"+r.Note)
 				break
 			}
+			// [v9f.17.1] 行格式带上评分与标记：E列v3评分/G列旧评分/标记列严/★都能落到批次明细
 			for i, c := range r.Cands {
 				if i >= 5 {
 					break
 				}
-				lines = append(lines, fmt.Sprintf("%s %s 仓%.0f%%", c.Code, c.Name, c.Weight*100))
+				line := fmt.Sprintf("%s %s v3评分%d", c.Code, c.Name, c.V3Score)
+				if c.OldScore > 0 {
+					line += fmt.Sprintf(" 评分%d", c.OldScore)
+				}
+				if c.Strict != "" {
+					line += " " + c.Strict
+				}
+				if c.Star != "" {
+					line += " " + c.Star
+				}
+				lines = append(lines, line)
 			}
 		case "牛指T+1":
 			_, mode := GetAutoPickSettings()

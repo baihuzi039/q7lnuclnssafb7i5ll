@@ -12,6 +12,7 @@ import (
 	"unicode/utf16"
 	"unicode/utf8"
 
+	"github.com/xuri/excelize/v2"
 	"golang.org/x/text/encoding/simplifiedchinese"
 
 	"go-stock/backend/db"
@@ -246,6 +247,7 @@ type trackTxtLine struct {
 	Code  string
 	Name  string
 	Score string
+	Mark  string // [v9f.17.1] 标记词（严/★等）
 }
 
 // parseTrackTxt 智能解析：以识别代码为主，分隔符/字段顺序全兼容。
@@ -276,8 +278,9 @@ func parseTrackTxt(content string) []trackTxtLine {
 		if len(fields) == 0 {
 			continue
 		}
-		// 逐词归类：代码优先识别，评分次之，其余当名称（顺序无关）
-		var code, name, score string
+		// 逐词归类：代码优先识别，评分次之，标记词（严/★）存Remark，其余当名称（顺序无关）
+		var code, name, score, mark string
+		isMark := func(f string) bool { return f == "严" || f == "★" || f == "重" || f == "轻" }
 		for _, f := range fields {
 			f = strings.Trim(f, "\"'‘’“”()（）[]【】")
 			if f == "" {
@@ -293,7 +296,14 @@ func parseTrackTxt(content string) []trackTxtLine {
 					continue
 				}
 			}
-			// 2) 评分（支持 9.2 / 92分 / 评分92）
+			// 2) 标记词（严/★等）
+			if isMark(f) {
+				if mark == "" {
+					mark = f
+				}
+				continue
+			}
+			// 3) 评分（支持 9.2 / 92分 / 评分92）
 			if score == "" {
 				s := strings.TrimSuffix(strings.TrimPrefix(strings.TrimSuffix(f, "分"), "评分"), "分")
 				if s != f && isScoreLike(s) {
@@ -306,7 +316,7 @@ func parseTrackTxt(content string) []trackTxtLine {
 					continue
 				}
 			}
-			// 3) 名称
+			// 4) 名称
 			if name == "" {
 				name = f
 			}
@@ -314,7 +324,7 @@ func parseTrackTxt(content string) []trackTxtLine {
 		if code == "" {
 			continue // 无法识别代码的行丢弃，不入库
 		}
-		out = append(out, trackTxtLine{Code: code, Name: name, Score: score})
+		out = append(out, trackTxtLine{Code: code, Name: name, Score: score, Mark: mark})
 	}
 	return out
 }
@@ -397,7 +407,7 @@ func (a *App) CreateTrackBatch(strategyID uint, tradeDate string, codeList strin
 		if cnt > 0 {
 			continue
 		}
-		item := models.TrackItem{BatchID: batch.ID, StockCode: ln.Code, StockName: ln.Name, Score: ln.Score}
+		item := models.TrackItem{BatchID: batch.ID, StockCode: ln.Code, StockName: ln.Name, Score: ln.Score, Remark: ln.Mark}
 		db.Dao.Create(&item)
 		added++
 	}
@@ -524,7 +534,34 @@ func (a *App) DeleteTrackItem(itemID uint) string {
 // DeleteTrackBatch 删除单个批次及其明细
 func (a *App) DeleteTrackBatch(batchID uint) string {
 	defer PanicHandler()
+	var batch models.TrackBatch
+	if err := db.Dao.First(&batch, batchID).Error; err == nil {
+		var st models.TrackStrategy
+		if err := db.Dao.First(&st, batch.StrategyID).Error; err == nil {
+			sheet := sheetPathFor(st.Name) // [v9f.17.1] 同步从回测表清除该批次所有行
+			if f, err := excelize.OpenFile(sheet); err == nil {
+				sheetName := "五年明细"
+				if st.Name == "牛指T+1" {
+					sheetName = "近五年回测明细"
+				}
+				rows, _ := f.GetRows(sheetName)
+				removed := 0
+				for i := len(rows) - 1; i >= 1; i-- { // 倒序删避免行号位移
+					r := rows[i]
+					if len(r) >= 2 && strings.TrimSpace(r[0]) == batch.TradeDate {
+						f.RemoveRow(sheetName, i+1)
+						removed++
+					}
+				}
+				if removed > 0 {
+					f.Save()
+					logger.SugaredLogger.Infof("删除批次 %s 同步清除回测表 %d 行", batch.TradeDate, removed)
+				}
+				f.Close()
+			}
+		}
+	}
 	db.Dao.Where("batch_id = ?", batchID).Delete(&models.TrackItem{})
 	db.Dao.Where("id = ?", batchID).Delete(&models.TrackBatch{})
-	return "已删除批次"
+	return "已删除批次（回测表对应行已同步清除）"
 }
