@@ -118,7 +118,11 @@ func FillAllTrackHoldings() {
 	db.Dao.Where("batch_id IN ?", batchIDs).Find(&items) // 全量重算，fillItemHoldings 内部幂等
 	filled := 0
 	failed := []string{}
+	logger.SugaredLogger.Infof("回填开始: 共%d批次 %d只票", len(batchIDs), len(items))
 	for i := range items {
+		if (i+1)%20 == 0 {
+			logger.SugaredLogger.Infof("回填进度: %d/%d", i+1, len(items))
+		}
 		var batch models.TrackBatch
 		if err := db.Dao.First(&batch, items[i].BatchID).Error; err != nil {
 			continue

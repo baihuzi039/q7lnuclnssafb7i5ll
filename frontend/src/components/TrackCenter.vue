@@ -68,7 +68,7 @@
           <n-button size="small" type="warning" ghost :loading="exporting" @click="exportCSV">导出 CSV</n-button>
           <n-button size="small" type="success" ghost :loading="exportingXlsx" @click="exportXlsxTop">导出 Excel</n-button>
           <n-tooltip trigger="hover"><template #trigger><n-button size="small" type="warning" ghost :loading="fixingNames" @click="fixNames">修正名称</n-button></template>用东财实时行情核对全部批次股票名称并修正（治改名/旧名单导致的错名，几千只约需几分钟）</n-tooltip>
-          <n-button size="small" @click="refresh">刷新</n-button>
+          <n-button size="small" :loading="refreshing" @click="refresh">{{ refreshing ? '回填中…' : '刷新' }}</n-button>
         </n-space>
         <n-text depth="3" style="font-size: 12px;">
           自动流程：把选股结果 txt 丢进收件箱（文件名 = 策略名_日期.txt，如 一夜持股_20261107.txt），
@@ -547,15 +547,23 @@ function onSwitchStrategy() {
 }
 
 // [v9f.2] 刷新=先回填涨幅再取数据（此前只重拉列表，回填不触发，用户点刷新"没反应"）
+const refreshing = ref(false)
 function refresh() {
-  if (!activeStrategy.value) return
+  if (!activeStrategy.value || refreshing.value) return
   const id = Number(activeStrategy.value)
+  refreshing.value = true
+  if (window.$message) window.$message.info('正在回填涨幅数据（批次多时需几分钟），完成后自动提示', { duration: 5000 })
   window.go.main.App.FillAllTrackHoldings().then(() => {
     GetTrackBatches(id).then((res) => { batches.value = res || [] })
     GetRecentTrackItems(id, 500).then((res) => { items.value = res || [] })
     GetTrackStats().then((res) => {
       stat.value = (res || []).find(s => String(s.strategyId) === activeStrategy.value) || {}
     })
+    refreshing.value = false
+    if (window.$message) window.$message.success('回填完成，表格已是最新', { duration: 5000 })
+  }).catch((e) => {
+    refreshing.value = false
+    if (window.$message) window.$message.error('回填失败: ' + e)
   })
 }
 
