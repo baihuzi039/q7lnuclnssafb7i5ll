@@ -526,13 +526,16 @@ function loadStrategies() {
 
 function onSwitchStrategy() {
   checkedBatches.value = []
-  // [v9f.17.7] 修时序bug：先存当前策略状态，再切 key，再加载新策略状态（旧顺序先用新 key 加载又被清空覆盖，导致切回来批次丢失）
+  // [v9f.17.7] 先存当前策略状态，再切 key，再加载新策略状态
+  // [v9f.17.12] 全程 _restoring=true：恢复赋值不触发watch保存（根因：赋值触发watch→把A的rows存进B的key→互相污染，一夜切牛指批次日期都不变）
+  _restoring = true
   saveQueryState()
   const q = loadQueryState()
   queryRows.value = q.rows || []
   queryBatchIds.value = q.batchIds || []
   if (q.start) backfillStart.value = q.start
   if (q.end) backfillEnd.value = q.end
+  setTimeout(() => { _restoring = false }, 0)
   // v9c.4: 共用date-picker但各tab记住各自日期——切tab时把组件值切到该tab上次用的
   const s = strategies.value.find(x => String(x.id) === activeStrategy.value)
   if (s && /牛指/.test(s.name || '')) {
@@ -612,7 +615,12 @@ console.log('[trackQuery] 恢复检查 key=', lsKey(), '存了:', JSON.stringify
 const backfillStart = ref(_qs.start || Date.now() - 10*86400000)
 const backfillEnd = ref(_qs.end || Date.now())
 // [v9f.17.10] 日期范围改动即存（不等查询）：用户选完日期切模块，回来必须还是选的日期
-watch([backfillStart, backfillEnd], () => { saveQueryState() })
+// [v9f.17.12] 防竞态：恢复赋值/切策略期间暂停watch保存（否则旧策略的rows会被写进新策略的key，互相污染）
+let _restoring = false
+watch([backfillStart, backfillEnd], () => {
+  if (_restoring) return
+  saveQueryState()
+})
 const queryRows = ref(_qs.rows || [])
 const queryBatchIds = ref(_qs.batchIds || [])
 
