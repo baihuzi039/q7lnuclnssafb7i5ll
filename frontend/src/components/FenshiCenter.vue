@@ -36,8 +36,10 @@
               <div class="live-price-row">
                 <span class="title-name">{{ result.name }}</span>
                 <span class="title-code">（{{ stripPrefix(result.code) }}）</span>
-                <span class="limit-inline buy">加 {{ (result.price * 1.02).toFixed(2) }}</span>
-                <span class="limit-inline sell">让 {{ (result.price * 0.98).toFixed(2) }}</span>
+                <span class="limit-col">
+                  <span class="limit-inline buy">加 {{ (result.price * 1.02).toFixed(2) }}</span>
+                  <span class="limit-inline sell">让 {{ (result.price * 0.98).toFixed(2) }}</span>
+                </span>
                 <span class="live-price" :class="result.changePct >= 0 ? 'up' : 'down'" :key="result.price">{{ result.price.toFixed(2) }}</span>
                 <span class="live-pct" :class="result.changePct >= 0 ? 'up' : 'down'" :key="result.changePct">{{ result.changePct >= 0 ? '+' : '' }}{{ result.changePct.toFixed(2) }}%</span>
               </div>
@@ -196,6 +198,9 @@ async function removeStock(code) {
   await loadWatchlist();
 }
 
+// ==================== 盘中自动刷新（v9f.23.7） ====================
+let refreshTimer = null;
+let refreshing = false;
 onMounted(() => {
   loadWatchlist();
   startClock();
@@ -209,9 +214,7 @@ onUnmounted(() => {
   if (refreshTimer) clearInterval(refreshTimer);
 });
 
-// ==================== 盘中自动刷新（v9f.23.7） ====================
-let refreshTimer = null;
-let refreshing = false;
+
 async function autoRefresh() {
   if (refreshing || !selectedCode.value) return; // 上一轮未完或无选中股则跳过
   const now = new Date(Date.now() + clockOffset);
@@ -542,18 +545,19 @@ function onChartDblClick() {
 .add-msg.err { color: #e04b4b; }
 /* v9f.20.3：三栏 grid（1fr auto 1fr），中栏真居中，左右栏各自独立永不重叠 */
 /* v9f.23.7：四栏 grid——时钟 | 行情区(名称+加让价+价格+涨幅+指标) | 让价并入行情行 */
-.top-row { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 14px; margin-bottom: 6px; }
-.limit-inline { font-size: 15px; font-weight: 700; padding: 1px 8px; border-radius: 3px; margin-left: 10px; }
+.top-row { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 18px; padding: 10px 0; margin-bottom: 6px; }
+.limit-col { display: flex; flex-direction: column; gap: 3px; margin-left: 6px; flex-shrink: 0; }
+.limit-inline { font-size: 13px; font-weight: 700; padding: 0px 8px; border-radius: 3px; margin-left: 0; }
 .limit-inline.buy { color: #e04b4b; border: 1px solid rgba(224,75,75,.5); }
 .limit-inline.sell { color: #22a45d; border: 1px solid rgba(34,164,93,.5); }
 .big-clock { justify-self: start; line-height: 1.2; }
 .chart-title { justify-self: center; display: flex; align-items: baseline; gap: 2px; white-space: nowrap; }
 .title-name { font-size: 26px; font-weight: 800; color: #f5c542; letter-spacing: 2px; text-shadow: 0 0 10px rgba(245,197,66,.35); }
 .title-code { font-size: 17px; font-weight: 700; color: #7eb8ff; }
-.quote-line { justify-self: end; text-align: right; font-size: 12px; line-height: 1.5; }
-.quote-line .dim { margin-left: 0; color: #d1e7ff; display: block; }
+.quote-line { justify-self: start; text-align: left; font-size: 12px; line-height: 1.5; padding-left: 36px; }
+.quote-line .dim { margin-left: 0; color: #d1e7ff; display: block; margin-top: 8px; clear: both; }
 /* v9f.23.2：实时价格通达信化——昨收0%红涨绿跌，与名称同字号，变动轻微闪烁 */
-.live-price-row { display: flex; justify-content: flex-end; align-items: baseline; gap: 8px; }
+.live-price-row { display: flex; align-items: center; gap: 10px; height: 44px; }
 /* v9f.23.6：名称样式回归独立 chart-title（金色大字居中） */
 .live-price { font-size: 26px; font-weight: bold; font-family: "Microsoft YaHei", "SimHei", sans-serif; }
 .live-pct { font-size: 15px; font-weight: bold; font-family: "Microsoft YaHei", "SimHei", sans-serif; }
@@ -569,7 +573,7 @@ function onChartDblClick() {
 .down { color: #22a45d; }
 .dim { color: #888; font-size: 12px; margin-left: 8px; }
 /* 大时钟（显眼醒目） */
-.clock-time { display: block; font-family: "Microsoft YaHei", "SimHei", sans-serif; font-size: 30px; font-weight: 700; color: #00e5a0; letter-spacing: 2px; font-variant-numeric: tabular-nums; text-shadow: 0 0 12px rgba(0,229,160,.45); }
+.clock-time { line-height: 1.1; display: block; font-family: "Microsoft YaHei", "SimHei", sans-serif; font-size: 30px; font-weight: 700; color: #00e5a0; letter-spacing: 2px; font-variant-numeric: tabular-nums; text-shadow: 0 0 12px rgba(0,229,160,.45); }
 .clock-date { font-size: 12px; color: #7ea8a0; }
 .chart-wrap { width: 100%; cursor: crosshair; }
 .trend-svg { width: 100%; height: auto; aspect-ratio: 860 / 400; background: #111; border-radius: 4px; display: block; }
