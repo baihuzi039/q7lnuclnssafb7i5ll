@@ -261,7 +261,7 @@ func fenshiAnalyzeFromTencent(stockCode string) (*FenshiAnalysisResult, error) {
 	code, _ := fenshiTencentCode(stockCode)
 	dctx := fenshiDailyCtx(code)
 	env := fenshiIndexEnv()
-	adv := fenshiRunRules(fenshiRuleIn{Trend: res.Trend, PrevClose: dctx.PrevClose, PrevHigh: dctx.PrevHigh, PrevLow: dctx.PrevLow, MA5: dctx.MA5, MA20: dctx.MA20, ShPct: env.ShPct, SzPct: env.SzPct, CybPct: env.CybPct, Now: time.Now()})
+	adv := fenshiRunRulesAdv(fenshiRuleIn{Trend: res.Trend, PrevClose: dctx.PrevClose, PrevHigh: dctx.PrevHigh, PrevLow: dctx.PrevLow, MA5: dctx.MA5, MA20: dctx.MA20, ShPct: env.ShPct, SzPct: env.SzPct, CybPct: env.CybPct, Now: time.Now()}, auctionMemoGet())
 	res.AdviceV2 = &adv
 	// 兑底说明
 	res.Advice = fmt.Sprintf("[腾讯源] %s 昨收%.2f 今开%.2f 现价%.2f（量比不可用，其余指标正常）", name, preClose, openPx, nowPx)
@@ -782,7 +782,7 @@ func fenshiAnalyzeCore(stockCode string) *FenshiAnalysisResult {
 	if code, ok := fenshiTencentCode(stockCode); ok {
 		dctx := fenshiDailyCtx(code)
 		env := fenshiIndexEnv()
-		adv := fenshiRunRules(fenshiRuleIn{Trend: resE.Trend, PrevClose: dctx.PrevClose, PrevHigh: dctx.PrevHigh, PrevLow: dctx.PrevLow, MA5: dctx.MA5, MA20: dctx.MA20, ShPct: env.ShPct, SzPct: env.SzPct, CybPct: env.CybPct, Now: time.Now()})
+		adv := fenshiRunRulesAdv(fenshiRuleIn{Trend: resE.Trend, PrevClose: dctx.PrevClose, PrevHigh: dctx.PrevHigh, PrevLow: dctx.PrevLow, MA5: dctx.MA5, MA20: dctx.MA20, ShPct: env.ShPct, SzPct: env.SzPct, CybPct: env.CybPct, Now: time.Now()}, auctionMemoGet())
 		resE.AdviceV2 = &adv
 	}
 	return resE
@@ -1016,7 +1016,7 @@ func fenshiAnalyzeFromSina(stockCode string) (*FenshiAnalysisResult, error) {
 	// v9f.22：规则引擎建议（新浪 5 分钟粒度数据较粗，仍可出倾向；失败不阻塞）
 	dctx := fenshiDailyCtx(tcode)
 	env := fenshiIndexEnv()
-	adv := fenshiRunRules(fenshiRuleIn{Trend: res.Trend, PrevClose: dctx.PrevClose, PrevHigh: dctx.PrevHigh, PrevLow: dctx.PrevLow, MA5: dctx.MA5, MA20: dctx.MA20, ShPct: env.ShPct, SzPct: env.SzPct, CybPct: env.CybPct, Now: time.Now()})
+	adv := fenshiRunRulesAdv(fenshiRuleIn{Trend: res.Trend, PrevClose: dctx.PrevClose, PrevHigh: dctx.PrevHigh, PrevLow: dctx.PrevLow, MA5: dctx.MA5, MA20: dctx.MA20, ShPct: env.ShPct, SzPct: env.SzPct, CybPct: env.CybPct, Now: time.Now()}, auctionMemoGet())
 	res.AdviceV2 = &adv
 	res.Advice = fmt.Sprintf("[新浪源·5分钟级] %s 昨收%.2f 今开%.2f 现价%.2f（分钟粒度较粗、量比不可用，趋势判断仍有效）", tcode, preClose, openPx, nowPx)
 	return res, nil
@@ -1219,5 +1219,22 @@ func (a *App) FenshiAuctionSnap(stockCode string) FenshiAuctionSnapResult {
 
 // FenshiAuctionEval 竞价样本评分（wails 绑定，转发纯函数）
 func (a *App) FenshiAuctionEval(samples []FenshiAuctionPoint, prevClose float64, prevVol float64) FenshiAuctionAdvice {
-	return fenshiAuctionEval(samples, prevClose, prevVol)
+	adv := fenshiAuctionEval(samples, prevClose, prevVol)
+	// v9f.24：缓存当日竞价结论，供盘中分析做共振加成
+	fenshiAuctionMemoMu.Lock()
+	fenshiAuctionMemo = &adv
+	fenshiAuctionMemoMu.Unlock()
+	return adv
+}
+
+// v9f.24：当日竞价结论缓存（前端 09:26 评分时写入）
+var (
+	fenshiAuctionMemoMu sync.Mutex
+	fenshiAuctionMemo   *FenshiAuctionAdvice
+)
+
+func auctionMemoGet() *FenshiAuctionAdvice {
+	fenshiAuctionMemoMu.Lock()
+	defer fenshiAuctionMemoMu.Unlock()
+	return fenshiAuctionMemo
 }

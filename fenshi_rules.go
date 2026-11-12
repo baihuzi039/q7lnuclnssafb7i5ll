@@ -14,11 +14,13 @@ import (
 	"time"
 )
 
-// FenshiAdvice 综合建议（v9f.22）
+// FenshiAdvice 综合建议（v9f.22，v9f.24 扩展）
 type FenshiAdvice struct {
-	Bias    string   `json:"bias"`   // 偏多 / 偏空 / 观望
-	Score   float64  `json:"score"`  // -100 ~ +100（正多负空）
-	Reasons []string `json:"reasons"` // 每条建议的依据
+	Bias       string   `json:"bias"`   // 偏多 / 偏空 / 观望
+	Score      float64  `json:"score"`  // -100 ~ +100（加权后净值）
+	Reasons    []string `json:"reasons"` // 每条建议的依据
+	Suggestion string   `json:"suggestion"` // v9f.24：分层操作建议文案
+	Confidence string   `json:"confidence"` // v9f.24：高/中/低（含竞价共振提升）
 }
 
 // fenshiRuleIn 规则引擎输入（v9f.21 数据层供给）
@@ -36,7 +38,13 @@ type fenshiRuleIn struct {
 }
 
 // fenshiRunRules 规则引擎主入口
+// v9f.24：加权评分——均价线×1.6、量价背离×1.4（趋势核心）；大盘共振×1.2；支撑压力×1.0；时间点×0.6（历史统计，降权）
 func fenshiRunRules(in fenshiRuleIn) FenshiAdvice {
+	return fenshiRunRulesAdv(in, nil)
+}
+
+// fenshiRunRulesAdv 带竞价结论的完整评分（v9f.24）
+func fenshiRunRulesAdv(in fenshiRuleIn, auction *FenshiAuctionAdvice) FenshiAdvice {
 	adv := FenshiAdvice{Bias: "观望"}
 	if len(in.Trend) < 10 {
 		adv.Reasons = append(adv.Reasons, "分时数据不足，暂不给倾向")
@@ -58,16 +66,28 @@ func fenshiRunRules(in fenshiRuleIn) FenshiAdvice {
 			reasons = append(reasons, why)
 		}
 	}
+	// v9f.24 加权：核心趋势规则高分权重，统计类低权重
+	const wVwap, wDiv, wTime, wSR, wMkt = 1.6, 1.4, 0.6, 1.0, 1.2
 	s, why := fenshiRuleVwap(in.Trend)
-	add(s, why)
+	add(s*wVwap, why)
 	s, why = fenshiRuleDivergence(in.Trend)
-	add(s, why)
+	add(s*wDiv, why)
 	s, why = fenshiRuleTimePoint(in.Now, in.Trend)
-	add(s, why)
+	add(s*wTime, why)
 	s, why = fenshiRuleSR(in)
-	add(s, why)
+	add(s*wSR, why)
 	s, why = fenshiRuleMarket(in)
-	add(s, why)
+	add(s*wMkt, why)
+	// 竞价共振：竞价结论与盘中同向时加权融入（±10 封顶）
+	if auction != nil && auction.Score != 0 {
+		as := auction.Score / 30 * 10 // 竞价±30 映射到 ±10
+		sameDir := (score >= 0 && as > 0) || (score < 0 && as < 0)
+		if sameDir {
+			add(as, fmt.Sprintf("竞价结论与盘中同向（竞价%s），共振加成", auction.Bias))
+		} else {
+			add(as*0.3, fmt.Sprintf("竞价结论与盘中相悖（竞价%s），谨慎参考反向项", auction.Bias))
+		}
+	}
 
 	if score > 100 {
 		score = 100
@@ -84,9 +104,54 @@ func fenshiRunRules(in fenshiRuleIn) FenshiAdvice {
 	default:
 		adv.Bias = "观望"
 	}
+	// v9f.24：分层操作建议文案
+	adv.Suggestion = fenshiSuggestion(adv.Bias, score, posSum, negSum)
+	// v9f.24：置信度——正负项越一边倒越可信；竞价同向提升
+	conf := 0.0
+	tot := posSum + negSum
+	if tot > 0 {
+		maj := posSum
+		if negSum > maj {
+			maj = negSum
+		}
+		conf = maj / tot // 0.5~1.0，越接近1越一边倒
+	}
+	switch {
+	case conf >= 0.85:
+		adv.Confidence = "高"
+	case conf >= 0.65:
+		adv.Confidence = "中"
+	default:
+		adv.Confidence = "低"
+	}
+	if auction != nil && auction.Score != 0 {
+		sameDirA := (score >= 0 && auction.Score > 0) || (score < 0 && auction.Score < 0)
+		if sameDirA && adv.Confidence == "中" {
+			adv.Confidence = "高"
+			adv.Reasons = append(adv.Reasons, "竞价与盘中同向，置信度提升为高")
+		}
+	}
 	// v9f.23.1：末尾追加分项合计，让分数可溯源
-	adv.Reasons = append(reasons, fmt.Sprintf("评分构成：多方项合计+%g，空方项合计-%g，净值%g", posSum, negSum, score))
+	adv.Reasons = append(reasons, fmt.Sprintf("评分构成：多方项合计+%g，空方项合计-%g，净值%g（已加权）", posSum, negSum, score))
 	return adv
+}
+
+// fenshiSuggestion v9f.24：分层操作建议文案
+func fenshiSuggestion(bias string, score, posSum, negSum float64) string {
+	switch bias {
+	case "偏多":
+		if score >= 60 {
+			return "多头强势：持有者持股待涨；空仓者不追高，等回踩均价线不破再接"
+		}
+		return "多头占优：持有者可持有；空仓者小仓位试探，破均价线止损"
+	case "偏空":
+		if score <= -60 {
+			return "空头强势：持有者逢反弹减仓；空仓者观望不接刀"
+		}
+		return "空头占优：持有者留意均价线压力，反弹乏力则减仓；空仓者观望"
+	default:
+		return "多空拉锯：观望为主，持有者持股观察放量方向，不急于加减仓"
+	}
 }
 
 // fenshiRuleVwap 均价线关系（近20分钟）

@@ -102,9 +102,10 @@
           <!-- v9f.22：规则引擎实时建议 -->
           <div v-if="result.adviceV2" class="advice-v2" :class="result.adviceV2.bias === '偏多' ? 'long' : (result.adviceV2.bias === '偏空' ? 'short' : 'flat')">
             <div class="adv-head">
-              <span class="adv-bias">【实时建议】{{ result.adviceV2.bias }}</span>
+              <span class="adv-bias">【实时建议】{{ result.adviceV2.bias }}（置信度：{{ result.adviceV2.confidence || '低' }}）</span>
               <span class="adv-score">多空强度 {{ result.adviceV2.score > 0 ? '+' : '' }}{{ Math.round(result.adviceV2.score) }}（+看多 -看空，0 为中性）</span>
             </div>
+            <div v-if="result.adviceV2.suggestion" class="adv-suggest">📌 {{ result.adviceV2.suggestion }}</div>
             <div v-for="(rs, ri) in result.adviceV2.reasons" :key="ri" class="adv-reason">{{ rs }}</div>
           </div>
           <n-space vertical size="small">
@@ -606,6 +607,7 @@ function onChartDblClick() {
 .advice-v2.flat .adv-bias { color: #d1d5db; }
 .adv-score { color: #d1e7ff; font-size: 12px; word-break: break-all; }
 .adv-reason { color: #c8d6e5; font-size: 13px; line-height: 1.7; word-break: break-all; white-space: normal; margin-right: 0; }
+.adv-suggest { color: #ffd700; font-size: 14px; font-weight: 600; margin-top: 6px; line-height: 1.6; word-break: break-all; }
 /* v9f.23.2：卡片内文字限制在容器内，不再横向溢出 */
 .advice-v2, .advice-v2 * { max-width: 100%; box-sizing: border-box; overflow-wrap: anywhere; }
 .adv-head, .adv-reason { overflow: hidden; }
