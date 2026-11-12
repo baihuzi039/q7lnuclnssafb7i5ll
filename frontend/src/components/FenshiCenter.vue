@@ -54,7 +54,7 @@
             @click="onChartClick"
             @dblclick="onChartDblClick"
           >
-            <svg class="trend-svg" viewBox="0 0 1360 820" preserveAspectRatio="none">
+            <svg class="trend-svg" viewBox="0 0 1360 560" preserveAspectRatio="none">
               <!-- 横向网格 + 纵轴刻度（黑体） -->
               <g v-for="(g, gi) in gridLines" :key="'g' + gi">
                 <line :x1="CH.x0" :x2="CH.x1" :y1="g.y" :y2="g.y" class="grid-line" />
@@ -364,8 +364,8 @@ function stopClock() {
 }
 
 // ==================== 图表几何（v9f.20） ====================
-const CH = { x0: 56, x1: 1356, y0: 8, y1: 640 }; // v9f.26.5：铺满屏宽1360，主图加高到640
-const VOL_AREA = { y0: 660, y1: 780 }; // v9f.26.5：量柱区120px，与主图隔20px，时间轴在下方
+const CH = { x0: 56, x1: 1356, y0: 8, y1: 420 }; // v9f.26.6：铺满屏宽1360，主图420（振幅大时纵坐标自适应拉开）
+const VOL_AREA = { y0: 420, y1: 520 }; // v9f.26.6：量柱区100px与主图连体（无间隔），时间轴在下方
 
 const pricePath = computed(() => ptsPath("now"));
 const vwapPath = computed(() => ptsPath("avg"));
@@ -379,7 +379,7 @@ const volBars = computed(() => {
   const volsAll = trend.map((t) => t.vol).filter((v) => v > 0).sort((a, b) => a - b);
   if (!volsAll.length) return [];
   const mid = volsAll[Math.floor(volsAll.length / 2)];
-  const vmax = Math.max(mid * 3, volsAll[volsAll.length - 1] * 0.999);
+  const vmax = Math.max(mid * 3, 1); // v9f.26.6：满刻度固定为中位数量3倍，巨量柱封顶不再参与定刻度
   const n = trend.length;
   const span = CH.x1 - CH.x0;
   const bw = Math.max(1.5, span / 241 - 0.6);
@@ -402,7 +402,7 @@ const volMaxLabel = computed(() => {
   const trend = r ? r.trend : [];
   const volsAll = (trend || []).map((t) => t.vol).filter((v) => v > 0).sort((a, b) => a - b);
   if (!volsAll.length) return "0";
-  const vmax = Math.max(volsAll[Math.floor(volsAll.length / 2)] * 3, volsAll[volsAll.length - 1] * 0.999);
+  const vmax = Math.max(volsAll[Math.floor(volsAll.length / 2)] * 3, 1); // v9f.26.6：与 volBars 截断口径一致
   if (vmax >= 1e6) return (vmax / 1e6).toFixed(1) + "M";
   if (vmax >= 1e3) return (vmax / 1e3).toFixed(0) + "K";
   return String(Math.round(vmax));
@@ -643,7 +643,7 @@ function onChartDblClick() {
 .clock-time { line-height: 1.1; display: block; font-family: "Microsoft YaHei", "SimHei", sans-serif; font-size: 30px; font-weight: 700; color: #00e5a0; letter-spacing: 2px; font-variant-numeric: tabular-nums; text-shadow: 0 0 12px rgba(0,229,160,.45); }
 .clock-date { font-size: 12px; color: #7ea8a0; }
 .chart-wrap { width: 100%; cursor: crosshair; }
-.trend-svg { width: 100%; height: auto; aspect-ratio: 1360 / 820; background: #111; border-radius: 4px; display: block; }
+.trend-svg { width: 100%; height: auto; aspect-ratio: 1360 / 560; background: #111; border-radius: 4px; display: block; }
 .grid-line { stroke: #2a2a2a; stroke-width: 1; }
 .vol-bar { opacity: 0.85; }
 .axis-line { stroke: #555; stroke-width: 1; }
@@ -660,7 +660,7 @@ function onChartDblClick() {
 .tip-text { fill: #ddd; font-size: 12px; font-family: "SimHei", "Microsoft YaHei", sans-serif; }
 .tip-text.strong { fill: #fff; font-weight: 700; font-size: 14px; }
 /* v9f.20.4：背景改纯黑与图表区一致 */
-.advice-box { background: #111; color: #d1e7ff; padding: 8px 10px; border-radius: 4px; margin: 36px 0 8px; font-size: 13px; }
+.advice-box { background: #111; color: #d1e7ff; padding: 8px 10px; border-radius: 4px; margin: 24px 0 8px; font-size: 13px; }
 /* v9f.22：规则引擎建议卡片 */
 .advice-v2 { background: #111; border-radius: 4px; margin-bottom: 8px; padding: 10px 12px; border-left: 3px solid #888; overflow: hidden; }
 .advice-v2.long { border-left-color: #e04b4b; }
