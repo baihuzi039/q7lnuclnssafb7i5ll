@@ -54,7 +54,7 @@
             @click="onChartClick"
             @dblclick="onChartDblClick"
           >
-            <svg class="trend-svg" viewBox="0 0 860 400" preserveAspectRatio="none">
+            <svg class="trend-svg" viewBox="0 0 1080 440" preserveAspectRatio="none">
               <!-- 横向网格 + 纵轴刻度（黑体） -->
               <g v-for="(g, gi) in gridLines" :key="'g' + gi">
                 <line :x1="CH.x0" :x2="CH.x1" :y1="g.y" :y2="g.y" class="grid-line" />
@@ -68,7 +68,7 @@
               <!-- 横轴：每半小时刻度（黑体） -->
               <g v-for="(t, ti) in xTicks" :key="'t' + ti">
                 <line :x1="t.x" :x2="t.x" :y1="CH.y0" :y2="CH.y1" class="grid-line" />
-                <text :x="t.x" :y="CH.y1 + 18" class="axis-text hei" text-anchor="middle">{{ t.label }}</text>
+                <text :x="t.x" :y="VOL_AREA.y1 + 20" class="axis-text hei" text-anchor="middle">{{ t.label }}</text>
               </g>
               <!-- 昨收基准虚线 -->
               <line v-if="prevCloseY >= CH.y0 && prevCloseY <= CH.y1" :x1="CH.x0" :x2="CH.x1" :y1="prevCloseY" :y2="prevCloseY" class="preclose-line" />
@@ -77,6 +77,7 @@
               <polyline :points="pricePath" fill="none" stroke="#4aa3ff" stroke-width="1.6" />
               <!-- v9f.26.1：成交量副图（通达信标准：涨红跌绿量柱） -->
               <line :x1="CH.x0" :x2="CH.x1" :y1="VOL_AREA.y0 - 4" :y2="VOL_AREA.y0 - 4" class="axis-line" />
+              <line :x1="CH.x0" :x2="CH.x1" :y1="VOL_AREA.y1" :y2="VOL_AREA.y1" class="axis-line" />
               <rect
                 v-for="(b, bi) in volBars"
                 :key="'vb' + bi"
@@ -363,8 +364,8 @@ function stopClock() {
 }
 
 // ==================== 图表几何（v9f.20） ====================
-const CH = { x0: 52, x1: 856, y0: 8, y1: 300 }; // v9f.26.1：主图压到300，310~352给成交量副图
-const VOL_AREA = { y0: 312, y1: 352 }; // v9f.26.1：成交量副图区
+const CH = { x0: 52, x1: 1076, y0: 8, y1: 260 }; // v9f.26.4：加宽到1080，主图压到260
+const VOL_AREA = { y0: 280, y1: 360 }; // v9f.26.4：量柱区扩到80px，时间轴放量柱下方
 
 const pricePath = computed(() => ptsPath("now"));
 const vwapPath = computed(() => ptsPath("avg"));
@@ -512,8 +513,8 @@ function chartIndexFromEvent(e) {
   const svg = e.currentTarget.querySelector("svg");
   if (!svg) return -1;
   const rect = svg.getBoundingClientRect();
-  // viewBox 860 宽，preserveAspectRatio=none → 线性映射
-  const vx = ((e.clientX - rect.left) / rect.width) * 860;
+  // viewBox 1080 宽，preserveAspectRatio=none → 线性映射
+  const vx = ((e.clientX - rect.left) / rect.width) * 1080;
   if (vx < CH.x0 || vx > CH.x1) return -1;
   // v9f.20.4：由鼠标 x 反算分钟偏移，再找最接近的数据点（与曲线定位一致）
   const off = Math.round(((vx - CH.x0) / (CH.x1 - CH.x0)) * 240);
@@ -552,7 +553,7 @@ function buildCross(idx) {
 // 提示框 x：靠右时翻到十字线左侧，防溢出图外
 const tipX = computed(() => {
   if (!cross.value) return 0;
-  return cross.value.x > 860 - 170 ? cross.value.x - 160 : cross.value.x + 10;
+  return cross.value.x > 1080 - 170 ? cross.value.x - 160 : cross.value.x + 10;
 });
 
 function onChartMove(e) {
@@ -638,7 +639,7 @@ function onChartDblClick() {
 .clock-time { line-height: 1.1; display: block; font-family: "Microsoft YaHei", "SimHei", sans-serif; font-size: 30px; font-weight: 700; color: #00e5a0; letter-spacing: 2px; font-variant-numeric: tabular-nums; text-shadow: 0 0 12px rgba(0,229,160,.45); }
 .clock-date { font-size: 12px; color: #7ea8a0; }
 .chart-wrap { width: 100%; cursor: crosshair; }
-.trend-svg { width: 100%; height: auto; aspect-ratio: 860 / 400; background: #111; border-radius: 4px; display: block; }
+.trend-svg { width: 100%; height: auto; aspect-ratio: 1080 / 440; background: #111; border-radius: 4px; display: block; }
 .grid-line { stroke: #2a2a2a; stroke-width: 1; }
 .vol-bar { opacity: 0.85; }
 .axis-line { stroke: #555; stroke-width: 1; }
@@ -655,7 +656,7 @@ function onChartDblClick() {
 .tip-text { fill: #ddd; font-size: 12px; font-family: "SimHei", "Microsoft YaHei", sans-serif; }
 .tip-text.strong { fill: #fff; font-weight: 700; font-size: 14px; }
 /* v9f.20.4：背景改纯黑与图表区一致 */
-.advice-box { background: #111; color: #d1e7ff; padding: 8px 10px; border-radius: 4px; margin: 8px 0; font-size: 13px; }
+.advice-box { background: #111; color: #d1e7ff; padding: 8px 10px; border-radius: 4px; margin: 18px 0 8px; font-size: 13px; }
 /* v9f.22：规则引擎建议卡片 */
 .advice-v2 { background: #111; border-radius: 4px; margin-bottom: 8px; padding: 10px 12px; border-left: 3px solid #888; overflow: hidden; }
 .advice-v2.long { border-left-color: #e04b4b; }
