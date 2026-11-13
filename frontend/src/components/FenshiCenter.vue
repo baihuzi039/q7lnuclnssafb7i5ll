@@ -69,7 +69,7 @@
               <!-- 横轴：每半小时刻度（黑体） -->
               <g v-for="(t, ti) in xTicks" :key="'t' + ti">
                 <line :x1="t.x" :x2="t.x" :y1="CH.y0" :y2="CH.y1" class="grid-line" />
-                <text :x="t.x" :y="VOL_AREA.y1 + 20" class="axis-text hei" text-anchor="middle">{{ t.label }}</text>
+                <text :x="t.x" :y="VOL_AREA.y1 + 20" class="axis-text hei" text-anchor="middle">{{ t.label }}</text><!-- v9f.27.4：时间轴在量柱底下20px -->
               </g>
               <!-- 昨收基准虚线 -->
               <line v-if="prevCloseY >= CH.y0 && prevCloseY <= CH.y1" :x1="CH.x0" :x2="CH.x1" :y1="prevCloseY" :y2="prevCloseY" class="preclose-line" />
@@ -365,8 +365,8 @@ function stopClock() {
 }
 
 // ==================== 图表几何（v9f.20） ====================
-const CH = { x0: 56, x1: 1330, y0: 8, y1: 540 }; // v9f.27.2：主图540高撑大，右侧留90px给涨跌幅轴
-const VOL_AREA = { y0: 560, y1: 640 }; // v9f.27.2：量柱贴底80px，时间轴最下
+const CH = { x0: 56, x1: 1330, y0: 8, y1: 560 }; // v9f.27.4：主图再加大到560
+const VOL_AREA = { y0: 575, y1: 635 }; // v9f.27.4：量柱再缩到60px，时间轴下移到655（量柱底下20px）
 
 const pricePath = computed(() => ptsPath("now"));
 const vwapPath = computed(() => ptsPath("avg"));
@@ -644,7 +644,7 @@ function onChartDblClick() {
 .clock-time { line-height: 1.1; display: block; font-family: "Microsoft YaHei", "SimHei", sans-serif; font-size: 30px; font-weight: 700; color: #00e5a0; letter-spacing: 2px; font-variant-numeric: tabular-nums; text-shadow: 0 0 12px rgba(0,229,160,.45); }
 .clock-date { font-size: 12px; color: #7ea8a0; }
 .chart-wrap { width: 100%; cursor: crosshair; }
-.trend-svg { width: 100%; height: 76vh; aspect-ratio: 1420 / 700; background: #111; border-radius: 4px; display: block; } /* v9f.27.2：高度撑满首屏（76vh），腾讯源+实时建议被推到首屏外需下拉 */
+.trend-svg { width: 100%; height: calc(100vh - 150px); background: #111; border-radius: 4px; display: block; } /* v9f.27.5：高度=首屏减顶栏，时间轴就是首屏底边，建议区被推到首屏外 */
 .grid-line { stroke: #2a2a2a; stroke-width: 1; }
 .vol-bar { opacity: 0.85; }
 .axis-line { stroke: #555; stroke-width: 1; }
@@ -663,7 +663,7 @@ function onChartDblClick() {
 /* v9f.20.4：背景改纯黑与图表区一致 */
 .advice-box { background: #111; color: #d1e7ff; padding: 8px 10px; border-radius: 4px; margin: 24px 0 8px; font-size: 13px; }
 /* v9f.22：规则引擎建议卡片 */
-.advice-v2 { background: #111; border-radius: 4px; margin-bottom: 8px; padding: 10px 12px; border-left: 3px solid #888; overflow: hidden; }
+.advice-v2 { background: #111; border-radius: 4px; margin: 30px 0 8px; padding: 10px 12px; border-left: 3px solid #888; overflow: hidden; } /* v9f.27.5：margin-top 30px 确保在首屏外 */
 .advice-v2.long { border-left-color: #e04b4b; }
 .advice-v2.short { border-left-color: #22a45d; }
 .adv-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; gap: 8px; }
