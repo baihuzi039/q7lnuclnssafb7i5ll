@@ -278,6 +278,59 @@ func fenshiAnalyzeFromTencent(stockCode string) (*FenshiAnalysisResult, error) {
 }
 
 // fenshiTencentCode 证券代码转腾讯格式：600519→sh600519, 000001→sz000001, 300001→sz300001, 830001→bj830001
+// FenshiSearchSuggest v9f.27.6：股票搜索联想（腾讯 smartbox 接口，实测可用）
+// 输入中文名（如“万”）、6位代码（如 6002）、拼音缩写均可，返回 [{code,name,market}]
+func (a *App) FenshiSearchSuggest(query string) []map[string]string {
+	out := make([]map[string]string, 0)
+	q := strings.TrimSpace(query)
+	if q == "" {
+		return out
+	}
+	url := "https://smartbox.gtimg.cn/s3/?v=2&q=" + url.QueryEscape(q) + "&t=all"
+	httpReq, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return out
+	}
+	httpReq.Header.Set("User-Agent", "Mozilla/5.0")
+	resp, err := fenshiHTTPClient().Get(httpReq)
+	if err != nil {
+		return out
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return out
+	}
+	// GBK → UTF-8（与快照同款转换函数）
+	body = stockdata.GB18030ToUTF8(body)
+	s := string(body)
+	i := strings.Index(s, "\"")
+	j := strings.LastIndex(s, "\"")
+	if i < 0 || j <= i {
+		return out
+	}
+	s = s[i+1 : j]
+	for _, item := range strings.Split(s, "^") {
+		f := strings.Split(item, "~")
+		if len(f) < 3 {
+			continue
+		}
+		mkt := f[0]
+		if mkt != "sh" && mkt != "sz" && mkt != "bj" {
+			continue // 过滤基金/港股等，分时模块只收 A 股
+		}
+		out = append(out, map[string]string{
+			"market": mkt,
+			"code":   f[1],
+			"name":   f[2],
+		})
+		if len(out) >= 8 {
+			break
+		}
+	}
+	return out
+}
+
 func fenshiTencentCode(code string) (string, bool) {
 	code = strings.TrimSpace(strings.ToLower(code))
 	// v9f.17.1：自选股表里的代码带 sh/sz/bj 前缀（如 sh600246），先剥前缀再判长度
@@ -321,7 +374,16 @@ func (a *App) FenshiWatchlist() []map[string]any {
 func (a *App) FenshiWatchlistAdd(stockCode string) string {
 	code, ok := fenshiTencentCode(stockCode)
 	if !ok {
-		return "代码格式错误: " + stockCode + "（请输入6位A股代码，如 600519 或 sh600519）"
+		// v9f.27.6：非6位代码 → 当作名称/拼音用联想接口反查代码（如输“万通发展”）
+		list := a.FenshiSearchSuggest(stockCode)
+		if len(list) == 0 {
+			return "未找到股票: " + stockCode + "（可输入6位代码、中文名称或拼音，如 600519 / 万通发展 / wtfz）"
+		}
+		code = list[0]["market"] + list[0]["code"]
+		code, ok = fenshiTencentCode(code)
+		if !ok {
+			return "未找到股票: " + stockCode
+		}
 	}
 	// 查重（与原版 Follow 一致：is_del=0 的有效关注）
 	var cnt int64

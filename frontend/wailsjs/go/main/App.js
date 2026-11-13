@@ -1809,3 +1809,6 @@ export function FenshiAuctionSnap(arg1) {
 export function FenshiAuctionEval(arg1, arg2, arg3) {
   return window['go']['main']['App']['FenshiAuctionEval'](arg1, arg2, arg3);
 }
+export function FenshiSearchSuggest(arg1) {
+  return window['go']['main']['App']['FenshiSearchSuggest'](arg1);
+}

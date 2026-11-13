@@ -907,3 +907,4 @@ export function FenshiDailyCtxGet(arg1: string): Promise<go.main.App.FenshiDaily
 export function FenshiAuctionSnap(arg1:string): Promise<go.main.App.FenshiAuctionSnapResult>;
 
 export function FenshiAuctionEval(arg1:Array<go.main.App.FenshiAuctionPoint>,arg2:number,arg3:number): Promise<go.main.App.FenshiAuctionAdvice>;
+export function FenshiSearchSuggest(arg1:string): Promise<Array<go.main.App.FenshiSearchSuggestItem>>;

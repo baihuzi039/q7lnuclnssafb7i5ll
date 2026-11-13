@@ -4,9 +4,16 @@
       <!-- 左侧：自选股 -->
       <div class="left-pane">
         <n-card size="small" title="自选股" class="mb12">
-          <div class="add-row">
-            <n-input v-model:value="manualCode" placeholder="输入代码如 600519" size="small" @keyup.enter="addStock" clearable />
+          <div class="add-row suggest-wrap">
+            <n-input v-model:value="manualCode" placeholder="代码 / 名称 / 拼音，如 600519 或 万通发展" size="small" @keyup.enter="addStock" @update:value="onSuggestInput" clearable />
             <n-button type="primary" size="small" :loading="adding" @click="addStock">添加</n-button>
+            <div v-if="suggestList.length" class="suggest-pop">
+              <div v-for="s in suggestList" :key="s.market + s.code" class="suggest-item" @click="pickSuggest(s)">
+                <span class="s-code">{{ s.code }}</span>
+                <span class="s-name">{{ s.name }}</span>
+                <span class="s-mkt">{{ s.market }}</span>
+              </div>
+            </div>
           </div>
           <div v-if="addMsg" class="add-msg" :class="addMsgOk ? 'ok' : 'err'">{{ addMsg }}</div>
           <n-data-table :columns="watchColumns" :data="watchlist" :max-height="520" size="small" :row-props="rowProps" striped />
@@ -142,7 +149,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted, h } from "vue";
 import { NCard, NButton, NDataTable, NTag, NInput, NSpace, NEmpty, NAlert } from "naive-ui";
-import { FenshiWatchlist, FenshiWatchlistAdd, FenshiWatchlistRemove, FenshiAnalyzeStock, FenshiNowTime, FenshiAuctionSnap, FenshiAuctionEval, FenshiDailyCtxGet } from "../../wailsjs/go/main/App";
+import { FenshiWatchlist, FenshiWatchlistAdd, FenshiWatchlistRemove, FenshiAnalyzeStock, FenshiNowTime, FenshiAuctionSnap, FenshiAuctionEval, FenshiDailyCtxGet, FenshiSearchSuggest } from "../../wailsjs/go/main/App";
 
 const watchlist = ref([]);
 const result = ref(null);
@@ -187,6 +194,22 @@ async function loadWatchlist() {
 
 const addMsg = ref("");
 const addMsgOk = ref(false);
+
+// v9f.27.6：搜索联想（腾讯 smartbox）——输入“万”/“6002”/“wtfz”自动弹候选
+const suggestList = ref([]);
+let suggestTimer = null;
+function onSuggestInput(v) {
+  const q = (v || "").trim();
+  if (suggestTimer) clearTimeout(suggestTimer);
+  if (!q || /^[0-9]{6}$/.test(q) || /^(sh|sz|bj)[0-9]{6}$/i.test(q)) { suggestList.value = []; return; }
+  suggestTimer = setTimeout(async () => {
+    try { suggestList.value = (await FenshiSearchSuggest(q)) || []; } catch (e) { suggestList.value = []; }
+  }, 250);
+}
+function pickSuggest(s) {
+  manualCode.value = s.market + s.code;
+  suggestList.value = [];
+}
 
 async function addStock() {
   const code = (manualCode.value || "").trim();
@@ -366,7 +389,7 @@ function stopClock() {
 
 // ==================== 图表几何（v9f.20） ====================
 const CH = { x0: 56, x1: 1330, y0: 8, y1: 560 }; // v9f.27.4：主图再加大到560
-const VOL_AREA = { y0: 575, y1: 635 }; // v9f.27.4：量柱再缩到60px，时间轴下移到655（量柱底下20px）
+const VOL_AREA = { y0: 590, y1: 635 }; // v9f.27.6：量柱再缩到45px，太大会影响分时线
 
 const pricePath = computed(() => ptsPath("now"));
 const vwapPath = computed(() => ptsPath("avg"));
@@ -608,6 +631,13 @@ function onChartDblClick() {
 .left-pane { min-width: 0; }
 .right-pane { min-width: 0; }
 .add-row { display: flex; gap: 8px; margin-bottom: 8px; }
+.suggest-wrap { position: relative; }
+.suggest-pop { position: absolute; top: 100%; left: 0; right: 0; z-index: 99; background: #161b26; border: 1px solid #2a3247; border-radius: 4px; max-height: 260px; overflow-y: auto; box-shadow: 0 4px 12px rgba(0,0,0,.5); }
+.suggest-item { display: flex; gap: 8px; padding: 6px 10px; cursor: pointer; font-size: 12px; align-items: center; }
+.suggest-item:hover { background: #1f2740; }
+.suggest-item .s-code { color: #5fb8f0; min-width: 52px; }
+.suggest-item .s-name { color: #d8dee9; flex: 1; }
+.suggest-item .s-mkt { color: #8a93a5; font-size: 10px; }
 .add-msg { font-size: 12px; margin-bottom: 6px; }
 .add-msg.ok { color: #22a45d; }
 .add-msg.err { color: #e04b4b; }
