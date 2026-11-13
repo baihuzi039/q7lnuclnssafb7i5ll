@@ -1229,9 +1229,12 @@ func (a *App) domReady(ctx context.Context) {
 		})
 		// [local-patch] v8-track 首次启动预置策略套件
 		ensurePresetTrackStrategies()
-		// [local-patch] v8-track 启动时补一次收件箱扫描与涨幅回填
+		// [local-patch] v8-track 启动时补一次同步+回填
+		// [v9f.17.17] 顺序链：先同步日线（盘中更到昨天/收盘后含今天），同步完再回填+扫描收件箱。
+		// 回填纯本地读库，不再发HTTP；同步期间库缺最新几天属正常，回填按缺失处理，不卡不堵
 		go func() {
 			time.Sleep(90 * time.Second)
+			syncDailyKLineJob(a.ctx)
 			a.ImportTrackInboxFolder()
 			FillAllTrackHoldings()
 		}()

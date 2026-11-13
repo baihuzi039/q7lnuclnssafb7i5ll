@@ -119,16 +119,9 @@ func FillBatchHoldings(batchID uint) {
 // （旧逻辑只回填 filled_days<8 的票，历史批次一旦错过就永远缺数据）
 func FillAllTrackHoldings() {
 	defer PanicHandler()
-	// [v9f.17.15] 回填前先联网校准基准票K线（最多1次请求）：日历停更时
-	// marketTradingDays 拿到的旧日历缺最新交易日，缺行检测永远检不出最新几天的缺失，
-	// 点刷新也不会补数。基准票更新后日历即时变全，逐票缺行检测/补拉才能生效。
-	for _, cal := range []struct{ code, name string }{
-		{"600036.SH", "招商银行"}, {"000001.SZ", "平安银行"}, {"600036", "招商银行"}, {"000001", "平安银行"},
-	} {
-		if upsertDailyKLine(cal.code, cal.name, 15) > 0 {
-			break
-		}
-	}
+	// [v9f.17.17] 回填纯本地化：一律不发HTTP。联网校准/补数全部收敛到日线同步任务
+	// (syncDailyKLineJob 开头已有基准票校准)，启动链保证「先同步后回填」，
+	// 回填开始时库已是最新。库缺数据时按缺失/停牌处理，等下次同步补齐。
 	var batchIDs []uint
 	db.Dao.Model(&models.TrackBatch{}).Pluck("id", &batchIDs) // 不再限90天：补齐历史后一次补全
 	if len(batchIDs) == 0 {
@@ -200,40 +193,19 @@ func fillItemHoldings(item *models.TrackItem, batch models.TrackBatch) bool {
 		return false
 	}
 	// 个股K线：买入日（或复牌日）起，30根窗口
+	// [v9f.17.17] 纯本地读：库内无数据不再发HTTP补拉（盘中拉了也被丢，白耗请求+拖慢回填），
+	// 直接返回缺失，等日线同步补齐后下次回填自动填上
 	rows, _ := tradeDaysFrom(item.StockCode, batch.TradeDate, 30)
 	if len(rows) == 0 {
-		// [v9f.17.7] 当场重拉：库内完全没有该股买入日后的K线 → 直接拉东财补数，拉到即刻重取
-		if n := upsertDailyKLine(item.StockCode, item.StockName, 60); n > 0 {
-			logger.SugaredLogger.Infof("回填补拉K线 %s: 新增%d行", item.StockCode, n)
-			rows, _ = tradeDaysFrom(item.StockCode, batch.TradeDate, 30)
-		}
-		if len(rows) == 0 {
-			return false // 重拉仍无数据（长期停牌未复牌）
-		}
+		return false // 库内无该股买入日后K线（待同步/长期停牌）
 	}
 	// [v9f.17.7] 个股K线按日期索引（先建索引，后续缺行检测与对齐都用）
 	kByDay := map[string]models.DailyKLine{}
 	for _, r := range rows {
 		kByDay[r.Day] = r
 	}
-	// [v9f.17.7] 缺中间行检测：市场日历上买日后有交易日但个股K线不够 → 当场重拉补齐
-	needRefetch := false
-	for _, mDay := range marketDays {
-		if _, has := kByDay[mDay]; !has {
-			needRefetch = true
-			break
-		}
-	}
-	if needRefetch {
-		if n := upsertDailyKLine(item.StockCode, item.StockName, 60); n > 0 {
-			logger.SugaredLogger.Infof("回填补拉K线(缺中间行) %s: 新增%d行", item.StockCode, n)
-			rows, _ = tradeDaysFrom(item.StockCode, batch.TradeDate, 30)
-			kByDay = map[string]models.DailyKLine{}
-			for _, r := range rows {
-				kByDay[r.Day] = r
-			}
-		}
-	}
+	// [v9f.17.17] 缺中间行不再发HTTP补拉：库缺哪天就按停牌标"停"，
+	// 同步任务补齐数据后，下次回填自动用真实K线覆盖（幂等）
 	// 买入基准价：手动价优先；否则买入日（或复牌日）开盘价，无开盘价用收盘价
 	base := 0.0
 	if item.BuyPrice > 0 {
