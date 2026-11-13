@@ -292,7 +292,7 @@ func (a *App) FenshiSearchSuggest(query string) []map[string]string {
 		return out
 	}
 	httpReq.Header.Set("User-Agent", "Mozilla/5.0")
-	resp, err := fenshiHTTPClient().Get(httpReq)
+	resp, err := fenshiHTTPClient.Get(httpReq)
 	if err != nil {
 		return out
 	}
@@ -301,8 +301,8 @@ func (a *App) FenshiSearchSuggest(query string) []map[string]string {
 	if err != nil {
 		return out
 	}
-	// GBK → UTF-8（与快照同款转换函数）
-	body = stockdata.GB18030ToUTF8(body)
+	// GBK → UTF-8（与快照同款转换函数；返回 string，需转回 []byte）
+	body = []byte(stockdata.GB18030ToUTF8(body))
 	s := string(body)
 	i := strings.Index(s, "\"")
 	j := strings.LastIndex(s, "\"")
