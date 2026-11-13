@@ -292,7 +292,7 @@ func (a *App) FenshiSearchSuggest(query string) []map[string]string {
 		return out
 	}
 	httpReq.Header.Set("User-Agent", "Mozilla/5.0")
-	resp, err := fenshiHTTPClient.Get(httpReq)
+	resp, err := fenshiHTTPClient.Do(httpReq)
 	if err != nil {
 		return out
 	}
