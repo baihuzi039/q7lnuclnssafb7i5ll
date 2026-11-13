@@ -18,12 +18,15 @@ type TrackStrategy struct {
 	CreatedAt time.Time `json:"createdAt"`
 }
 
-// TrackBatch 一个策略某交易日的批次
+// TrackBatch 一个策略某交易日某模式的批次
+// [v9f.17.16] 牛指T+1三模式(标准/严选/全勤)各自独立批次：Mode参与唯一性判定，
+// 同日三模式互不冲突。老库的 idx_track_batch_unique 复合唯一索引会在启动迁移里 DROP。
 type TrackBatch struct {
 	ID         uint      `json:"id" gorm:"primaryKey"`
-	StrategyID uint      `json:"strategyId" gorm:"index;uniqueIndex:idx_track_batch_unique"`
-	TradeDate  string    `json:"tradeDate" gorm:"index;uniqueIndex:idx_track_batch_unique;size:10"` // 2026-11-06
-	Source     string    `json:"source" gorm:"size:32"`                                             // 来源: txt / manual
+	StrategyID uint      `json:"strategyId" gorm:"index"`
+	TradeDate  string    `json:"tradeDate" gorm:"index;size:10"` // 2026-11-06
+	Mode       string    `json:"mode" gorm:"index;size:16"`      // [v9f.17.16] 模式: 标准/严选/全勤；空=通用(一夜等)
+	Source     string    `json:"source" gorm:"size:32"`          // 来源: txt / manual
 	Remark     string    `json:"remark" gorm:"size:255"`
 	CreatedAt  time.Time `json:"createdAt"`
 }

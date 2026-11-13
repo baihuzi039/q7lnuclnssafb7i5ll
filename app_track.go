@@ -130,6 +130,7 @@ func (a *App) GetTrackBatches(strategyID uint) *[]map[string]interface{} {
 		db.Dao.Model(&models.TrackItem{}).Where("batch_id = ?", b.ID).Count(&cnt)
 		out = append(out, map[string]interface{}{
 			"id": b.ID, "strategyId": b.StrategyID, "tradeDate": b.TradeDate,
+			"mode":   b.Mode,
 			"source": b.Source, "remark": b.Remark, "createdAt": b.CreatedAt,
 			"itemCount": cnt,
 		})
@@ -167,6 +168,35 @@ func (a *App) GetRecentTrackItems(strategyID uint, limit int) *[]TrackItemRow {
 		WHERE b.strategy_id = ?
 		ORDER BY b.trade_date DESC, i.id ASC LIMIT ?`
 	db.Dao.Raw(sql, strategyID, limit).Scan(&rows)
+	return &rows
+}
+
+// GetRecentTrackItemsMode [v9f.17.16] 按模式过滤的近期明细：mode 为空=不过滤（通用批次），
+// 牛指T+1 传 标准/严选/全勤 只取对应模式批次，三模式数据不再混在同一张表里
+func (a *App) GetRecentTrackItemsMode(strategyID uint, mode string, limit int) *[]TrackItemRow {
+	defer PanicHandler()
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	var rows []TrackItemRow
+	sql := `SELECT i.*, b.trade_date as trade_date, s.name as strategy
+		FROM track_items i
+		JOIN track_batches b ON i.batch_id = b.id
+		JOIN track_strategies s ON b.strategy_id = s.id
+		WHERE b.strategy_id = ?`
+	args := []interface{}{strategyID}
+	if mode != "" {
+		// [v9f.17.16] 兼容老数据：17.15 及之前的牛指批次 mode 为空，视为"标准"
+		if mode == "标准" {
+			sql += " AND (b.mode = '标准' OR b.mode = '')"
+		} else {
+			sql += " AND b.mode = ?"
+			args = append(args, mode)
+		}
+	}
+	sql += " ORDER BY b.trade_date DESC, i.id ASC LIMIT ?"
+	args = append(args, limit)
+	db.Dao.Raw(sql, args...).Scan(&rows)
 	return &rows
 }
 
@@ -377,6 +407,12 @@ func isScoreLike(s string) bool {
 
 // CreateTrackBatch 手动创建批次（代码列表逗号/换行/空格分隔）
 func (a *App) CreateTrackBatch(strategyID uint, tradeDate string, codeList string) string {
+	return a.CreateTrackBatchMode(strategyID, tradeDate, codeList, "")
+}
+
+// CreateTrackBatchMode [v9f.17.16] 带模式建批次：牛指T+1 标准/严选/全勤 各自独立批次；
+// mode 为空=通用批次（一夜持股等）。同策略+同日期+同模式幂等。
+func (a *App) CreateTrackBatchMode(strategyID uint, tradeDate string, codeList string, mode string) string {
 	defer PanicHandler()
 	tradeDate = strings.TrimSpace(tradeDate)
 	if tradeDate == "" {
@@ -393,9 +429,9 @@ func (a *App) CreateTrackBatch(strategyID uint, tradeDate string, codeList strin
 		return "未解析到有效代码，请检查格式：每行一只票（代码 [名称] [评分]）"
 	}
 	var batch models.TrackBatch
-	err := db.Dao.Where("strategy_id = ? AND trade_date = ?", strategyID, tradeDate).First(&batch).Error
+	err := db.Dao.Where("strategy_id = ? AND trade_date = ? AND mode = ?", strategyID, tradeDate, mode).First(&batch).Error
 	if err != nil {
-		batch = models.TrackBatch{StrategyID: strategyID, TradeDate: tradeDate, Source: "manual"}
+		batch = models.TrackBatch{StrategyID: strategyID, TradeDate: tradeDate, Mode: mode, Source: "manual"}
 		if err := db.Dao.Create(&batch).Error; err != nil {
 			return "创建批次失败: " + err.Error()
 		}

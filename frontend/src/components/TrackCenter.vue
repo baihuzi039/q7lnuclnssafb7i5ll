@@ -279,6 +279,15 @@ const isNiuZhiTab = computed(() => {
   const s = strategies.value.find(x => String(x.id) === activeStrategy.value)
   return !!s && /牛指/.test(s.name || '')
 })
+// [v9f.17.16] 牛指模式切换：批次表与明细立即按新模式重载
+watch(niuzhiMode, () => {
+  if (!isNiuZhiTab.value || !activeStrategy.value) return
+  checkedBatches.value = []
+  const id = Number(activeStrategy.value)
+  GetTrackBatches(id).then((res) => { batches.value = res || [] })
+  window.go.main.App.GetRecentTrackItemsMode(id, niuzhiMode.value || '', 500).then((res) => { items.value = res || [] })
+})
+
 function runNiuZhi() {
   niuzhiDateTs.value = overnightDateTs.value // 记住牛指本次用的日期
   niuzhiLoading.value = true
@@ -546,19 +555,30 @@ function onSwitchStrategy() {
   refresh()
 }
 
-// [v9f.2] 刷新=先回填涨幅再取数据（此前只重拉列表，回填不触发，用户点刷新"没反应"）
+// [v9f.17.16] 刷新重构：先立即加载当前策略数据（切策略秒出该策略自己的批次），
+// 回填放后台跑，完成后自动重载一次。修复两个问题：
+// ①切策略表格数据要等回填完才换 → 看到的是上一个策略的旧数据（"切策略批次一样"）
+// ②回填慢/卡住时表格永远不更新、转圈无尽头
 const refreshing = ref(false)
 function refresh() {
   if (!activeStrategy.value || refreshing.value) return
   const id = Number(activeStrategy.value)
-  refreshing.value = true
-  if (window.$message) window.$message.info('正在回填涨幅数据（批次多时需几分钟），完成后自动提示', { duration: 5000 })
-  window.go.main.App.FillAllTrackHoldings().then(() => {
+  // ① 立即加载（不等回填）
+  const mode = niuzhiMode.value || ''
+  const loadAll = () => {
     GetTrackBatches(id).then((res) => { batches.value = res || [] })
-    GetRecentTrackItems(id, 500).then((res) => { items.value = res || [] })
+    window.go.main.App.GetRecentTrackItemsMode(id, isNiuZhiTab.value ? mode : '', 500).then((res) => { items.value = res || [] })
     GetTrackStats().then((res) => {
       stat.value = (res || []).find(s => String(s.strategyId) === activeStrategy.value) || {}
     })
+  }
+  loadAll()
+  // ② 回填后台跑，完成后重载
+  refreshing.value = true
+  if (window.$message) window.$message.info('正在回填涨幅数据（后台进行，完成后自动刷新表格）', { duration: 5000 })
+  window.go.main.App.FillAllTrackHoldings().then(() => {
+    if (String(activeStrategy.value) !== String(id)) return // 已切走，丢弃过期结果
+    loadAll()
     refreshing.value = false
     if (window.$message) window.$message.success('回填完成，表格已是最新', { duration: 5000 })
   }).catch((e) => {
@@ -603,7 +623,11 @@ function fixNames() {
 // [v9f.13] 日期范围与查询状态持久化：切模块/重启后恢复上次状态
 // [v9f.14] 查询状态按策略隔离：一夜/牛指各自的查询结果互不串
 const LS_KEY = 'trackQueryState.v2'
-function lsKey() { return LS_KEY + ':' + String(activeStrategy.value || '') }
+function lsKey() {
+  let k = LS_KEY + ':' + String(activeStrategy.value || '')
+  if (isNiuZhiTab.value && niuzhiMode.value) k += ':' + niuzhiMode.value // [v9f.17.16] 牛指三模式查询互不串
+  return k
+}
 function loadQueryState() {
   try { return JSON.parse(localStorage.getItem(lsKey())) || {} } catch { return {} }
 }
@@ -672,7 +696,14 @@ async function doQueryBatches() {
     else if (window.$message) window.$message.error('获取批次列表失败: ' + err)
     return
   }
-  const inRange = all.filter(b => String(b.tradeDate || '') >= s && String(b.tradeDate || '') <= e)
+  // [v9f.17.16] 牛指三模式批次独立：查询只命中当前模式（mode 字段匹配；无 mode 的旧数据归入"标准"）
+  const curMode = isNiuZhiTab.value ? (niuzhiMode.value || '标准') : ''
+  const inRange = all.filter(b => {
+    const d = String(b.tradeDate || '')
+    if (d < s || d > e) return false
+    if (isNiuZhiTab.value) return (b.mode || '标准') === curMode
+    return true
+  })
   if (!inRange.length) {
     if (window.$dialog) window.$dialog.warning({ title: '范围内无批次', content: `在 ${s} ~ ${e} 范围内没有找到任何批次（当前策略共 ${all.length} 个批次）。可点「补齐历史」按此范围重演建批次，完成后再查询。` })
     else if (window.$message) window.$message.warning(`范围内无批次（${s} ~ ${e}），共${all.length}个批次。可点「补齐历史」建批次`, { duration: 10000 })

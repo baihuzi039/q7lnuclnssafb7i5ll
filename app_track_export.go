@@ -676,10 +676,12 @@ func (a *App) BackfillTrackRange(strategyName, startDate, endDate string) string
 		}
 		day := d.Format("2006-01-02")
 		var cnt int64
-		db.Dao.Model(&models.TrackBatch{}).Where("strategy_id = ? AND trade_date = ?", st.ID, day).Count(&cnt)
-		if cnt > 0 {
-			skip++
-			continue
+		if strategyName != "牛指T+1" { // [v9f.17.16] 牛指按三模式在 case 内各自查重，这里只管其它策略
+			db.Dao.Model(&models.TrackBatch{}).Where("strategy_id = ? AND trade_date = ?", st.ID, day).Count(&cnt)
+			if cnt > 0 {
+				skip++
+				continue
+			}
 		}
 		var lines []string
 		switch strategyName {
@@ -707,21 +709,43 @@ func (a *App) BackfillTrackRange(strategyName, startDate, endDate string) string
 				lines = append(lines, line)
 			}
 		case "牛指T+1":
-			_, mode := GetAutoPickSettings()
-			if mode == "" {
-				mode = "标准"
-			}
-			r := aa.RunNiuZhiScanJSON(day, mode)
-			if !r.Trading {
-				notes = append(notes, day+":"+r.Note)
-				break
-			}
-			for i, c := range r.Cands {
-				if i >= 5 {
-					break
+			// [v9f.17.16] 三模式各自独立批次：标准/严选/全勤 同日各建一批，互不覆盖
+			var niuzhiLinesErr error
+			for _, mode := range []string{"标准", "严选", "全勤"} {
+				var mLines []string
+				r := aa.RunNiuZhiScanJSON(day, mode)
+				if !r.Trading {
+					if mode == "标准" {
+						notes = append(notes, day+":"+r.Note)
+					}
+					continue
 				}
-				lines = append(lines, fmt.Sprintf("%s %s 评分%d", c.Code, c.Name, c.Score))
+				for i, c := range r.Cands {
+					if i >= 5 {
+						break
+					}
+					mLines = append(mLines, fmt.Sprintf("%s %s 评分%d", c.Code, c.Name, c.Score))
+				}
+				if len(mLines) == 0 {
+					continue
+				}
+				niuzhiLinesErr = nil
+				var exist int64
+				if mode == "标准" {
+					db.Dao.Model(&models.TrackBatch{}).Where("strategy_id = ? AND trade_date = ? AND (mode = '标准' OR mode = '')", st.ID, day).Count(&exist)
+				} else {
+					db.Dao.Model(&models.TrackBatch{}).Where("strategy_id = ? AND trade_date = ? AND mode = ?", st.ID, day, mode).Count(&exist)
+				}
+				if exist > 0 {
+					skip++
+					continue
+				}
+				msg := aa.CreateTrackBatchMode(st.ID, day, strings.Join(mLines, "\n"), mode)
+				logger.SugaredLogger.Infof("补齐 %s %s[%s]: %s", strategyName, day, mode, msg)
+				created++
 			}
+			_ = niuzhiLinesErr
+			continue
 		default:
 			return "该策略暂不支持历史重演（当前支持：一夜持股/牛指T+1）"
 		}

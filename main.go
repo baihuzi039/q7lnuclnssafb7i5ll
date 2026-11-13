@@ -352,6 +352,12 @@ func AutoMigrate() {
 	db.Dao.AutoMigrate(&models.PromptBacktestTask{})
 	db.Dao.AutoMigrate(&models.PromptBacktestPick{})
 	db.Dao.AutoMigrate(&models.SignalRecord{})
+	// [v9f.17.16] track 三表纳入迁移：TrackBatch 新增 mode 列（牛指三模式独立批次）；
+	// 老库的 (strategy_id, trade_date) 复合唯一索引会阻止同日多模式批次入库，必须 DROP
+	db.Dao.AutoMigrate(&models.TrackStrategy{})
+	db.Dao.AutoMigrate(&models.TrackBatch{})
+	db.Dao.AutoMigrate(&models.TrackItem{})
+	db.Dao.Exec("DROP INDEX IF EXISTS idx_track_batch_unique")
 
 	//updateMultipleModel()
 
