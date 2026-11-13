@@ -653,19 +653,42 @@ var (
 	fenshiJobRunning = map[string]bool{}
 )
 
-// fenshiPSFetchMemoPS 去重保护，防止同一代码并发重复分析拖死前端
-var fenshiJobInflight = map[string]*FenshiAnalysisResult{}
+// 去重保护，防止同一代码并发重复分析拖死前端（v9f.27.1：加时间戳，结果只缓存3秒，避免永久旧数据导致分时图不更新）
+type fenshiJobEntry struct {
+	res   *FenshiAnalysisResult
+	at    time.Time
+	done  bool
+}
+var fenshiJobInflight = map[string]*fenshiJobEntry{}
 
 func (a *App) FenshiAnalyzeStock(stockCode string) *FenshiAnalysisResult {
 	fenshiJobMu.Lock()
-	if res, ok := fenshiJobInflight[stockCode]; ok {
-		fenshiJobMu.Unlock()
-		return res
+	if e, ok := fenshiJobInflight[stockCode]; ok {
+		// v9f.27.1：3秒内的结果直接复用（防并发），超过3秒视为过期重新拉取
+		if e.done && e.res != nil && time.Since(e.at) < 3*time.Second {
+			fenshiJobMu.Unlock()
+			return e.res
+		}
+		if !e.done {
+			// 正在拉取中，等结果（简单自旋等待，上限约5秒）
+			fenshiJobMu.Unlock()
+			for i := 0; i < 100; i++ {
+				time.Sleep(50 * time.Millisecond)
+				fenshiJobMu.Lock()
+				e, ok := fenshiJobInflight[stockCode]
+				if ok && e.done {
+					fenshiJobMu.Unlock()
+					return e.res
+				}
+				fenshiJobMu.Unlock()
+			}
+			return nil
+		}
 	}
 	fenshiJobMu.Unlock()
 
 	fenshiJobMu.Lock()
-	fenshiJobInflight[stockCode] = nil // 占位
+	fenshiJobInflight[stockCode] = &fenshiJobEntry{done: false} // 占位
 	fenshiJobMu.Unlock()
 
 	var r *FenshiAnalysisResult
@@ -678,7 +701,7 @@ func (a *App) FenshiAnalyzeStock(stockCode string) *FenshiAnalysisResult {
 	}
 
 	fenshiJobMu.Lock()
-	fenshiJobInflight[stockCode] = r
+	fenshiJobInflight[stockCode] = &fenshiJobEntry{res: r, at: time.Now(), done: true}
 	fenshiJobMu.Unlock()
 	return r
 }
