@@ -576,14 +576,24 @@ function refresh() {
   // ② 回填后台跑，完成后重载
   refreshing.value = true
   if (window.$message) window.$message.info('正在回填涨幅数据（后台进行，完成后自动刷新表格）', { duration: 5000 })
-  window.go.main.App.FillAllTrackHoldings().then(() => {
+  // [v9f.17.19] 120秒兑底：回填纯本地只需几秒，promise 悬挂（后端被占用/异常）时自动解除转圈，不再永久卡住
+  let done = false
+  const finish = (msg, type) => {
+    if (done) return
+    done = true
+    refreshing.value = false
     if (String(activeStrategy.value) !== String(id)) return // 已切走，丢弃过期结果
     loadAll()
     refreshing.value = false
-    if (window.$message) window.$message.success('回填完成，表格已是最新', { duration: 5000 })
+    if (window.$message && msg) window.$message[type](msg, { duration: 5000 })
+  }
+  const timer = setTimeout(() => finish(null), 120000)
+  window.go.main.App.FillAllTrackHoldings().then(() => {
+    clearTimeout(timer)
+    finish('回填完成，表格已是最新', 'success')
   }).catch((e) => {
-    refreshing.value = false
-    if (window.$message) window.$message.error('回填失败: ' + e)
+    clearTimeout(timer)
+    finish('回填失败: ' + e, 'error')
   })
 }
 

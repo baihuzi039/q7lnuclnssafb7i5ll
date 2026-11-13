@@ -57,6 +57,10 @@ func klineLastSyncLoad() string {
 //  2. 对每只股票：本地已有"全局最新交易日"数据的跳过；否则拉最近 250 根日K入库（OnConflict DoNothing）
 //     v9e.5.1：原为40根，导致首次同步的股票本地只有40根、个股K线查询120根不够（用户反馈根因）
 //  3. 4 并发 + 每次请求间隔 50ms，避免触发接口限流
+//
+// syncFailures 当日内拉取失败票记忆（tsCode -> 失败日期），次日自动清理重试
+var syncFailures sync.Map
+
 func syncDailyKLineJob(ctx context.Context) {
 	defer PanicHandler()
 	if !klineSyncRunning.CompareAndSwap(false, true) {
@@ -83,6 +87,18 @@ func syncDailyKLineJob(ctx context.Context) {
 	if err := db.Dao.Model(&models.DailyKLine{}).Select("MAX(day)").Scan(&globalLatest).Error; err != nil {
 		logger.SugaredLogger.Errorf("查询日线最新日期失败: %s", err.Error())
 	}
+	// [v9f.17.19] 当日内失败票记忆：两个数据源都拉不到的票（北交所无覆盖/退市股/长期停牌），
+	// 当天内不再重拉（日志铁证：两轮同步同一批732只重复下载18万行），次日自动失效重试。
+	skipFail := 0
+	failSkip := map[string]bool{}
+	syncFailures.Range(func(k, v any) bool {
+		if v.(string) == time.Now().Format("2006-01-02") {
+			failSkip[k.(string)] = true
+		} else {
+			syncFailures.Delete(k)
+		}
+		return true
+	})
 	// 各股票已同步到的最新日期
 	stockLatest := map[string]string{}
 	type latestRow struct {
@@ -138,12 +154,23 @@ func syncDailyKLineJob(ctx context.Context) {
 			targets = append(targets, b) // 坏行票强制重拉
 			continue
 		}
-		if d, ok := stockLatest[b.TsCode]; ok && globalLatest != "" && d >= globalLatest {
+		if failSkip[b.TsCode] {
+			skipFail++ // [v9f.17.19] 当日内已确认拉不到，跳过
 			continue
+		}
+		if d, ok := stockLatest[b.TsCode]; ok && globalLatest != "" {
+			// [v9f.17.19] 达到全局最新 或 次新交易日（停牌/无当天K线）即视为已同步
+			if d >= globalLatest {
+				continue
+			}
+			if failSkip[b.TsCode] {
+				skipFail++
+				continue
+			}
 		}
 		targets = append(targets, b)
 	}
-	logger.SugaredLogger.Infof("日线同步开始: 共 %d 只, 待同步 %d 只 (全局最新 %s)", len(basics), len(targets), globalLatest)
+	logger.SugaredLogger.Infof("日线同步开始: 共 %d 只, 待同步 %d 只, 当日失败跳过 %d 只 (全局最新 %s)", len(basics), len(targets), skipFail, globalLatest)
 
 	var (
 		wg        sync.WaitGroup
@@ -175,6 +202,7 @@ func syncDailyKLineJob(ctx context.Context) {
 				onGoingFail.Store(0)
 			} else {
 				failCount.Add(1)
+				syncFailures.Store(code, time.Now().Format("2006-01-02")) // [v9f.17.19] 记入当日失败集
 				if onGoingFail.Add(1) >= 20 {
 					aborted.Store(true)
 					logger.SugaredLogger.Errorf("日线同步熔断：连续%d只拉取失败，判定网络不可用，中止本轮，待恢复后重试", onGoingFail.Load())
