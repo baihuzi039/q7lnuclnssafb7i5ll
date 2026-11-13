@@ -222,8 +222,8 @@ onMounted(() => {
   loadWatchlist();
   startClock();
   auctionTimer = setInterval(auctionPoll, 15000);
-  // v9f.23.7：盘中每15秒自动刷新当前股分时（仅交易日 9:30-15:00）
-  refreshTimer = setInterval(autoRefresh, 15000);
+  // v9f.27.0：盘中每5秒自动刷新当前股分时（仅交易日 9:30-15:00），看盘曲线最多落后5秒
+  refreshTimer = setInterval(autoRefresh, 5000);
 });
 onUnmounted(() => {
   stopClock();
