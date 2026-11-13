@@ -204,8 +204,33 @@ func fillItemHoldings(item *models.TrackItem, batch models.TrackBatch) bool {
 	for _, r := range rows {
 		kByDay[r.Day] = r
 	}
-	// [v9f.17.17] 缺中间行不再发HTTP补拉：库缺哪天就按停牌标"停"，
-	// 同步任务补齐数据后，下次回填自动用真实K线覆盖（幂等）
+	// [v9f.17.20] 缺行补拉（仅收盘后）：17.17 删补拉后，停牌票/个别未同步到位的票缺行只标"停"
+	// 永远空着（实例：002274 创世纪 10-31 重大事项停牌，复牌日 11-02 数据同步延迟 → 1~8日全空）。
+	// 现在：15:00 收盘后若市场日历上买日后存在缺行 → 补拉一次（盘中仍禁止，防 17.16 式 HTTP 风暴；
+	// 17.19 当日失败票记忆防反复拉），拉到即重建索引，停牌票顺延复牌日正常填格。
+	{
+		missing := false
+		for mIdx := 1; mIdx < len(marketDays) && mIdx <= 8; mIdx++ {
+			if _, has := kByDay[marketDays[mIdx]]; !has {
+				missing = true
+				break
+			}
+		}
+		now := time.Now()
+		marketClosed := now.After(time.Date(now.Year(), now.Month(), now.Day(), 15, 0, 0, 0, now.Location()))
+		if missing && marketClosed {
+			if n := upsertDailyKLine(item.StockCode, item.StockName, 60); n > 0 {
+				logger.SugaredLogger.Infof("回填补拉K线(收盘后缺行) %s: 新增%d行", item.StockCode, n)
+				if rs, ok := tradeDaysFrom(item.StockCode, batch.TradeDate, 30); ok {
+					rows = rs
+					kByDay = map[string]models.DailyKLine{}
+					for _, r := range rows {
+						kByDay[r.Day] = r
+					}
+				}
+			}
+		}
+	}
 	// 买入基准价：手动价优先；否则买入日（或复牌日）开盘价，无开盘价用收盘价
 	base := 0.0
 	if item.BuyPrice > 0 {
