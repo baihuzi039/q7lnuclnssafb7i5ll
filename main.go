@@ -102,6 +102,14 @@ func main() {
 	data.SponsorDecryptKeyHex = BuildKey
 	data.SetAppIcon(icon)
 	db.Init("")
+	// [v9f.17.18] WAL+busy_timeout：SQLite默认journal模式下写事务阻塞所有读，
+	// 日线同步连续写几分钟→前端查询/清空/切策略全部饿死。WAL读写互不阻塞。
+	if e := db.Dao.Exec("PRAGMA journal_mode=WAL;").Error; e != nil {
+		log.SugaredLogger.Errorf("开启WAL失败: %s", e.Error())
+	} else {
+		log.SugaredLogger.Infof("SQLite WAL 模式已开启")
+	}
+	_ = db.Dao.Exec("PRAGMA busy_timeout=5000;").Error
 	data.InitAnalyzeSentiment()
 	go AutoMigrate()
 	// 每笔持仓止盈止损监控守护协程（幂等；未开启开关时空转，10 秒一次仅读配置）

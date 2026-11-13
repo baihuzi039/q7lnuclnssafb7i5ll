@@ -1230,12 +1230,13 @@ func (a *App) domReady(ctx context.Context) {
 		// [local-patch] v8-track 首次启动预置策略套件
 		ensurePresetTrackStrategies()
 		// [local-patch] v8-track 启动时补一次同步+回填
-		// [v9f.17.17] 顺序链：先同步日线（盘中更到昨天/收盘后含今天），同步完再回填+扫描收件箱。
-		// 回填纯本地读库，不再发HTTP；同步期间库缺最新几天属正常，回填按缺失处理，不卡不堵
+		// [v9f.17.18] 启动链：先回填（纯本地秒级，表格立刻出），再同步日线，同步完再回填一次补上今天/昨天的新数据。
+		// 17.17 的「先同步后回填」在网络上被断时同步卡几小时，回填被堵住=打开就转半天，故反转顺序。
 		go func() {
 			time.Sleep(90 * time.Second)
-			syncDailyKLineJob(a.ctx)
+			FillAllTrackHoldings()
 			a.ImportTrackInboxFolder()
+			syncDailyKLineJob(a.ctx)
 			FillAllTrackHoldings()
 		}()
 		// [local-patch] 集合竞价快照：交易日 9:26 自动抓（竞价撮合完成时刻，错过即失）

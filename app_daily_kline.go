@@ -152,23 +152,43 @@ func syncDailyKLineJob(ctx context.Context) {
 		rowSum    atomic.Int64
 		failCount atomic.Int64
 	)
+	// [v9f.17.18] 连续失败熔断：网络被断（EOF风暴）时每票耗尽全部候选超时，
+	// 几百票能卡几小时且永不结束，回填在启动链里被堵在后面。连续20票全失败判定网络不可用，中止本轮同步。
+	var onGoingFail atomic.Int64
+	var aborted atomic.Bool
 	for _, b := range targets {
+		if aborted.Load() {
+			break
+		}
 		wg.Add(1)
 		sem <- struct{}{}
 		go func(code, name string) {
 			defer wg.Done()
 			defer func() { <-sem }()
+			if aborted.Load() {
+				return
+			}
 			n := upsertDailyKLine(code, name, 250)
 			if n > 0 {
 				okCount.Add(1)
 				rowSum.Add(int64(n))
+				onGoingFail.Store(0)
 			} else {
 				failCount.Add(1)
+				if onGoingFail.Add(1) >= 20 {
+					aborted.Store(true)
+					logger.SugaredLogger.Errorf("日线同步熔断：连续%d只拉取失败，判定网络不可用，中止本轮，待恢复后重试", onGoingFail.Load())
+				}
 			}
 			time.Sleep(50 * time.Millisecond) // 控制请求频率
 		}(b.TsCode, b.Name)
 	}
 	wg.Wait()
+	if aborted.Load() {
+		logger.SugaredLogger.Infof("日线同步中止: 成功 %d 只, 失败/停牌 %d 只, 新增 %d 行, 耗时 %s",
+			okCount.Load(), failCount.Load(), rowSum.Load(), time.Since(start).Round(time.Second))
+		return
+	}
 	klineLastSyncStore(time.Now().Format("2006-01-02 15:04:05"))
 	InvalidateKlineStatusCache() // [v9f.3] 同步完成强刷状态缓存
 	logger.SugaredLogger.Infof("日线同步完成: 成功 %d 只, 失败/停牌 %d 只, 新增 %d 行, 耗时 %s",
