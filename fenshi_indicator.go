@@ -1,5 +1,10 @@
 package main
 
+import (
+	"fmt"
+	"strconv"
+)
+
 // v9f.28：通达信"分时源码A"指标翻译落地
 // 数据边界：现手买卖(BUYVOL/SELLVOL)为L2逐笔数据，本软件无该数据源，对应段落跳过；
 // 机构资金A2/A3原意为单笔成交额>20万的方向统计，此处用分钟级近似（分钟额>160万且分钟收涨/跌）。
@@ -104,11 +109,17 @@ func fenshiApplyIndicatorA(res *FenshiAnalysisResult) {
 	A6 := A2 + A3
 	flow := A2 - A3
 	if A6 > 0 {
+		// v9f.28.2：取绝对值四舍五入再定符号，负数不能直接 int(pct+0.5)（向零截断会吞掉 -1）
 		pct := flow / A6 * 100
-		if flow > 0 {
-			ind.MoneyTxt = "+" + itoaF(pct, 0) + "%"
-		} else if flow < 0 {
-			ind.MoneyTxt = "-" + itoaF(-pct, 0) + "%"
+		a := -pct
+		if a < 0 {
+			a = -a
+		}
+		r := int(a + 0.5)
+		if pct > 0.5 {
+			ind.MoneyTxt = "+" + strconv.Itoa(r) + "%"
+		} else if pct < -0.5 {
+			ind.MoneyTxt = "-" + strconv.Itoa(r) + "%"
 		} else {
 			ind.MoneyTxt = "0%"
 		}
@@ -195,55 +206,48 @@ func fenshiApplyIndicatorA(res *FenshiAnalysisResult) {
 
 	switch {
 	case score >= 70:
-		ind.Advice = "★强推(" + itoa(score) + ") 积极做多"
+		ind.Advice = fmt.Sprintf("★强推(%d) 积极做多", score)
 		ind.Detail = "趋势量能资金偏多,支撑低吸阻力高抛"
 	case score >= 50:
-		ind.Advice = "☆关注(" + itoa(score) + ") 逢低吸纳"
+		ind.Advice = fmt.Sprintf("☆关注(%d) 逢低吸纳", score)
 		ind.Detail = "趋势向上但存分歧,回踩支撑轻仓试多"
 	case score >= 30:
-		ind.Advice = "△观望(" + itoa(score) + ") 等待信号"
+		ind.Advice = fmt.Sprintf("△观望(%d) 等待信号", score)
 		ind.Detail = "多空不明交投清淡,等待明朗再操作"
 	case score >= 15:
-		ind.Advice = "○减仓(" + itoa(score) + ") 控制风险"
+		ind.Advice = fmt.Sprintf("○减仓(%d) 控制风险", score)
 		ind.Detail = "空头信号增多,反弹减仓等底部企稳"
 	default:
-		ind.Advice = "X规避(" + itoa(score) + ") 离场观望"
+		ind.Advice = fmt.Sprintf("X规避(%d) 离场观望", score)
 		ind.Detail = "空头趋势资金流出,不建议参与等反转"
 	}
 
-	// ---- 买卖信号 ----
-	// CROSS(支撑,现价)：支撑上穿现价 = 现价跌破支撑（区间逻辑：跌至支撑区视为买点）
-	// LONGCROSS(支撑,现价,2)：现价连续≥2分钟在支撑上方后跌穿
-	aboveRun := 0
+	// ---- 买卖信号（按通达信语义）----
+	// CROSS(支撑,现价)：现价跌破支撑（支撑线上穿现价）
+	// LONGCROSS(支撑,现价,2)：现价在支撑下方连续≥2分钟后上穿支撑 → 回升买点
+	// CROSS(现价,阻力)：现价上破阻力
+	belowRun := 0 // 现价连续在支撑下方的分钟数
 	for i := 1; i < n; i++ {
 		p0, p1 := closes[i-1], closes[i]
-		if p1 < ind.Support && p0 >= ind.Support {
-			// 现价跌破支撑
+		// LONGCROSS(支撑,现价,2)：下方持续≥2分钟后上穿支撑 → 买
+		if p1 >= ind.Support && p0 < ind.Support && belowRun >= 2 {
 			ind.Marks = append(ind.Marks, FenshiIndMark{Time: res.Trend[i].Time, Kind: "buy", Price: p1 * 0.9975})
-			aboveRun = 0
-		} else if p1 > ind.Support {
-			aboveRun++
-		} else {
-			aboveRun = 0
 		}
+		// CROSS(支撑,现价)：现价跌破支撑 → STICKLINE 柱体信号（无文字）
+		if p1 < ind.Support && p0 >= ind.Support {
+			belowRun = 1
+		} else if p1 < ind.Support {
+			belowRun++
+		} else {
+			belowRun = 0
+		}
+		// CROSS(现价,阻力)：现价上破阻力 → 卖
 		if p1 > ind.Resist && p0 <= ind.Resist {
 			ind.Marks = append(ind.Marks, FenshiIndMark{Time: res.Trend[i].Time, Kind: "sell", Price: p1 * 1.0025})
 		}
 	}
-	_ = aboveRun
 
 	res.IndA = &ind
 }
 
-// itoaF 浮点转字符串（四舍五入）——避免额外依赖
-func itoaF(v float64, digits int) string {
-	p := 1.0
-	for i := 0; i < digits; i++ {
-		p *= 10
-	}
-	v = float64(int64(v*p+0.5)) / p
-	s := fmt.Sprintf("%.*f", digits, v)
-	return s
-}
 
-func itoa(v int) string { return fmt.Sprintf("%d", v) }
