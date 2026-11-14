@@ -164,6 +164,10 @@ func FillAllTrackHoldings() {
 		}
 	}
 	logger.SugaredLogger.Infof("批次涨幅回填完成: 更新%d只 / 未变化或失败%d只 [%s]", filled, len(failed), strings.Join(failed, ","))
+	// [v9f.17.21] 库健康快照：一眼看出本地库日线覆盖到哪天、持仓票缺数据的票数
+	var globalLast string
+	db.Dao.Model(&models.DailyKLine{}).Select("MAX(day)").Scan(&globalLast)
+	logger.SugaredLogger.Infof("库健康: 日线全局最新日=%s, 市场日历=库内distinct(day)", globalLast)
 	{
 		// [v9f.16] 回填后自动同步回测表：数据更新到哪，表就自动追到哪（幂等，无新增则不写盘）
 		for _, name := range []string{"一夜持股", "牛指T+1"} {
@@ -197,7 +201,9 @@ func fillItemHoldings(item *models.TrackItem, batch models.TrackBatch) bool {
 	// 直接返回缺失，等日线同步补齐后下次回填自动填上
 	rows, _ := tradeDaysFrom(item.StockCode, batch.TradeDate, 30)
 	if len(rows) == 0 {
-		return false // 库内无该股买入日后K线（待同步/长期停牌）
+		// [v9f.17.21] 诊断日志：库内无该股买入日后K线，写明票与批次日期，方便定位是同步缺失还是脏数据
+		logger.SugaredLogger.Warnf("回填跳过 %s@批次%s: 库内无买入日(%s)后任何K线", item.StockCode, batch.TradeDate, batch.TradeDate)
+		return false
 	}
 	// [v9f.17.7] 个股K线按日期索引（先建索引，后续缺行检测与对齐都用）
 	kByDay := map[string]models.DailyKLine{}
