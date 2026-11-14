@@ -399,11 +399,10 @@ const volBars = computed(() => {
   const r = result.value;
   const trend = r ? r.trend : [];
   if (!trend || trend.length < 2) return [];
-  // v9f.26.5：量柱刻度截断——按盘中位数量3倍为满刻度，巨量柱封顶，普通量柱不被压扁
-  const volsAll = trend.map((t) => t.vol).filter((v) => v > 0).sort((a, b) => a - b);
-  if (!volsAll.length) return [];
-  const mid = volsAll[Math.floor(volsAll.length / 2)];
-  const vmax = Math.max(mid * 3, 1); // v9f.26.6：满刻度固定为中位数量3倍，巨量柱封顶不再参与定刻度
+  // v9f.27.10：满刻度=当日最大分钟量×1.1（留10%余量），量柱严格按真实比例绘制不越界（通达信同款）
+  let vmax = 1;
+  for (const t of trend) if (t.vol > vmax) vmax = t.vol;
+  vmax = vmax * 1.1;
   const n = trend.length;
   const span = CH.x1 - CH.x0;
   const bw = Math.max(1.5, span / 241 - 0.6);
@@ -413,6 +412,7 @@ const volBars = computed(() => {
     const t = trend[i];
     const off = Math.max(0, Math.min(240, minuteOffset(t.time)));
     const x = CH.x0 + (off / 240) * span;
+    // v9f.27.10：真实比例（满刻度已含10%余量，柱高必然≤量区，物理上不越界）
     const h = Math.max(1, (t.vol / vmax) * (VOL_AREA.y1 - VOL_AREA.y0));
     const up = t.now >= prev; // 与上一分钟比：涨红跌绿（通达信同口径）
     bars.push({ x: x.toFixed(1), y: (VOL_AREA.y1 - h).toFixed(1), w: bw.toFixed(1), h: h.toFixed(1), color: up ? "#e04b4b" : "#22a45d" });
@@ -421,12 +421,12 @@ const volBars = computed(() => {
   return bars;
 });
 const volMaxLabel = computed(() => {
-  // v9f.26.5：与 volBars 的截断刻度保持一致（中位数量3倍）
+  // v9f.27.10：与 volBars 满刻度同口径（最大量×1.1）
   const r = result.value;
   const trend = r ? r.trend : [];
-  const volsAll = (trend || []).map((t) => t.vol).filter((v) => v > 0).sort((a, b) => a - b);
-  if (!volsAll.length) return "0";
-  const vmax = Math.max(volsAll[Math.floor(volsAll.length / 2)] * 3, 1); // v9f.26.6：与 volBars 截断口径一致
+  let vmax = 1;
+  for (const t of trend || []) if (t.vol > vmax) vmax = t.vol;
+  vmax = vmax * 1.1;
   if (vmax >= 1e6) return (vmax / 1e6).toFixed(1) + "M";
   if (vmax >= 1e3) return (vmax / 1e3).toFixed(0) + "K";
   return String(Math.round(vmax));
