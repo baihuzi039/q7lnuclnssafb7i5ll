@@ -61,7 +61,7 @@
             @click="onChartClick"
             @dblclick="onChartDblClick"
           >
-            <svg class="trend-svg" viewBox="0 0 1420 712" preserveAspectRatio="none">
+            <svg class="trend-svg" viewBox="0 0 1420 718" preserveAspectRatio="none">
               <!-- 横向网格 + 纵轴刻度（黑体） -->
               <g v-for="(g, gi) in gridLines" :key="'g' + gi">
                 <line :x1="CH.x0" :x2="CH.x1" :y1="g.y" :y2="g.y" class="grid-line" />
@@ -76,7 +76,7 @@
               <!-- 横轴：每半小时刻度（黑体） -->
               <g v-for="(t, ti) in xTicks" :key="'t' + ti">
                 <line :x1="t.x" :x2="t.x" :y1="CH.y0" :y2="CH.y1" class="grid-line" />
-                <text :x="t.x" :y="VOL_AREA.y1 + 16" class="axis-text hei" text-anchor="middle">{{ t.label }}</text><!-- v9f.27.11：时间轴紧贴量区底下 -->
+                <text :x="t.x" :y="VOL_AREA.y1 + 14" class="axis-text hei" text-anchor="middle">{{ t.label }}</text><!-- v9f.27.12：时间轴在量区底下 -->
               </g>
               <!-- 昨收基准虚线 -->
               <line v-if="prevCloseY >= CH.y0 && prevCloseY <= CH.y1" :x1="CH.x0" :x2="CH.x1" :y1="prevCloseY" :y2="prevCloseY" class="preclose-line" />
@@ -84,7 +84,7 @@
               <polyline :points="vwapPath" fill="none" stroke="#e6b800" stroke-width="1.3" />
               <polyline :points="pricePath" fill="none" stroke="#4aa3ff" stroke-width="1.6" />
               <!-- v9f.26.1：成交量副图（通达信标准：涨红跌绿量柱） -->
-              <line :x1="CH.x0" :x2="CH.x1" :y1="VOL_AREA.y0 - 4" :y2="VOL_AREA.y0 - 4" class="axis-line" />
+              <!-- v9f.27.12：按用户要求不画分界线，主图与量区自然衔接 -->
               <line :x1="CH.x0" :x2="CH.x1" :y1="VOL_AREA.y1" :y2="VOL_AREA.y1" class="axis-line" />
               <rect
                 v-for="(b, bi) in volBars"
@@ -388,8 +388,8 @@ function stopClock() {
 }
 
 // ==================== 图表几何（v9f.20） ====================
-const CH = { x0: 56, x1: 1330, y0: 8, y1: 655 }; // v9f.27.11：主图到655（蓝框：图顶~最低价档），价格刻度只在蓝框内
-const VOL_AREA = { y0: 660, y1: 690 }; // v9f.27.11：量区仅30px贴底（黄框），刻度标签在量区内，绝不伸进主图
+const CH = { x0: 56, x1: 1330, y0: 8, y1: 508 }; // v9f.27.12：主图500高（约3/4），价格刻度只在此区
+const VOL_AREA = { y0: 508, y1: 700 }; // v9f.27.12：量区192高（约1/4），与主图直接衔接无分界线，数据互不干扰
 
 const pricePath = computed(() => ptsPath("now"));
 const vwapPath = computed(() => ptsPath("avg"));
