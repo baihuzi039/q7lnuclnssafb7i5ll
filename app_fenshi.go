@@ -303,9 +303,12 @@ func (a *App) FenshiSearchSuggest(query string) []map[string]string {
 	if err != nil {
 		return out
 	}
-	// GBK → UTF-8（与快照同款转换函数；返回 string，需转回 []byte）
-	body = []byte(stockdata.GB18030ToUTF8(body))
-	s := string(body)
+	// v9f.28.4：smartbox 返回的名称本身就是 \uXXXX 转义字面量（实测），包成字符串字面量直接 Unquote 即可解码
+	s0 := string(body)
+	if unq, err := strconv.Unquote(`"` + s0 + `"`); err == nil {
+		s0 = unq
+	}
+	s := s0
 	i := strings.Index(s, "\"")
 	j := strings.LastIndex(s, "\"")
 	if i < 0 || j <= i {
