@@ -61,7 +61,7 @@
             @click="onChartClick"
             @dblclick="onChartDblClick"
           >
-            <svg class="trend-svg" viewBox="0 0 1420 700" preserveAspectRatio="none">
+            <svg class="trend-svg" viewBox="0 0 1420 712" preserveAspectRatio="none">
               <!-- 横向网格 + 纵轴刻度（黑体） -->
               <g v-for="(g, gi) in gridLines" :key="'g' + gi">
                 <line :x1="CH.x0" :x2="CH.x1" :y1="g.y" :y2="g.y" class="grid-line" />
@@ -76,7 +76,7 @@
               <!-- 横轴：每半小时刻度（黑体） -->
               <g v-for="(t, ti) in xTicks" :key="'t' + ti">
                 <line :x1="t.x" :x2="t.x" :y1="CH.y0" :y2="CH.y1" class="grid-line" />
-                <text :x="t.x" :y="VOL_AREA.y1 + 20" class="axis-text hei" text-anchor="middle">{{ t.label }}</text><!-- v9f.27.4：时间轴在量柱底下20px -->
+                <text :x="t.x" :y="VOL_AREA.y1 + 16" class="axis-text hei" text-anchor="middle">{{ t.label }}</text><!-- v9f.27.11：时间轴紧贴量区底下 -->
               </g>
               <!-- 昨收基准虚线 -->
               <line v-if="prevCloseY >= CH.y0 && prevCloseY <= CH.y1" :x1="CH.x0" :x2="CH.x1" :y1="prevCloseY" :y2="prevCloseY" class="preclose-line" />
@@ -96,7 +96,7 @@
                 :fill="b.color"
                 class="vol-bar"
               />
-              <text :x="CH.x0 - 8" :y="VOL_AREA.y0 + 12" class="axis-text hei" text-anchor="end">{{ volMaxLabel }}</text>
+              <text :x="CH.x0 - 8" :y="VOL_AREA.y1 - 2" class="axis-text hei" text-anchor="end">{{ volMaxLabel }}</text>
               <text :x="CH.x0 - 8" :y="VOL_AREA.y1" class="axis-text hei" text-anchor="end">0</text>
               <!-- 最新价小红点 -->
               <circle v-if="lastDot" :cx="lastDot.x" :cy="lastDot.y" r="3.5" fill="#ff4d4f" class="last-dot" />
@@ -388,8 +388,8 @@ function stopClock() {
 }
 
 // ==================== 图表几何（v9f.20） ====================
-const CH = { x0: 56, x1: 1330, y0: 8, y1: 560 }; // v9f.27.4：主图再加大到560
-const VOL_AREA = { y0: 590, y1: 635 }; // v9f.27.6：量柱再缩到45px，太大会影响分时线
+const CH = { x0: 56, x1: 1330, y0: 8, y1: 655 }; // v9f.27.11：主图到655（蓝框：图顶~最低价档），价格刻度只在蓝框内
+const VOL_AREA = { y0: 660, y1: 690 }; // v9f.27.11：量区仅30px贴底（黄框），刻度标签在量区内，绝不伸进主图
 
 const pricePath = computed(() => ptsPath("now"));
 const vwapPath = computed(() => ptsPath("avg"));
