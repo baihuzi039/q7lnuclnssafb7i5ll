@@ -98,6 +98,16 @@
               />
               <text :x="CH.x0 - 8" :y="VOL_AREA.y1 - 2" class="axis-text hei" text-anchor="end">{{ volMaxLabel }}</text>
               <text :x="CH.x0 - 8" :y="VOL_AREA.y1" class="axis-text hei" text-anchor="end">0</text>
+              <!-- v9f.28 通达信分时源码A：阻力/支撑/中轴 + 买卖标记 -->
+              <g v-if="result && result.indA && result.indA.ok">
+                <line :x1="CH.x0" :x2="CH.x1" :y1="indAY(result.indA.resist)" :y2="indAY(result.indA.resist)" stroke="#ffff00" stroke-width="1.6" stroke-dasharray="6 4" opacity="0.9" />
+                <line :x1="CH.x0" :x2="CH.x1" :y1="indAY(result.indA.support)" :y2="indAY(result.indA.support)" stroke="#ffffff" stroke-width="1.6" stroke-dasharray="6 4" opacity="0.85" />
+                <line :x1="CH.x0" :x2="CH.x1" :y1="indAY(result.indA.mid)" :y2="indAY(result.indA.mid)" stroke="#aaaaaa" stroke-width="1" stroke-dasharray="2 4" opacity="0.8" />
+                <g v-for="(m, mi) in indAMarks" :key="'im' + mi">
+                  <text v-if="m.kind === 'buy'" :x="m.x" :y="m.y" class="ind-mark" fill="#ff44ff" text-anchor="middle">↖买</text>
+                  <text v-else :x="m.x" :y="m.y" class="ind-mark" fill="#44ff44" text-anchor="middle">↗卖</text>
+                </g>
+              </g>
               <!-- 最新价小红点 -->
               <circle v-if="lastDot" :cx="lastDot.x" :cy="lastDot.y" r="3.5" fill="#ff4d4f" class="last-dot" />
               <!-- 十字线（悬停或固定时显示） -->
@@ -122,6 +132,12 @@
             </svg>
           </div>
           <!-- v9f.27.3：腾讯源行已上移到顶部高开行后面，原底部行删除 -->
+          <!-- v9f.28 分时源码A智能分析面板 -->
+          <div v-if="result && result.indA && result.indA.ok" class="advice-v2 ind-panel">
+            <div class="ind-title">━━ 智能分析面板 ━━</div>
+            <div class="ind-row a">个股 {{ result.indA.trendTxt }} | {{ result.indA.volTxt }} | 资金{{ result.indA.moneyTxt }} {{ result.indA.moneyAtt }} | {{ result.indA.posTxt }} {{ result.indA.avgRel }}</div>
+            <div class="ind-row b">【指标A建议】{{ result.indA.advice }} — {{ result.indA.detail }}</div>
+          </div>
           <!-- v9f.22：规则引擎实时建议 -->
           <div v-if="result.adviceV2" class="advice-v2" :class="result.adviceV2.bias === '偏多' ? 'long' : (result.adviceV2.bias === '偏空' ? 'short' : 'flat')">
             <div class="adv-head">
@@ -517,6 +533,27 @@ const xTicks = computed(() => {
   });
 });
 
+// v9f.28 分时源码A：价格→主图y（用与价格线同款对称量程）
+function indAY(price) {
+  const r = result.value;
+  if (!r || !r.trend || !r.trend.length) return CH.y1;
+  const { min, max } = valueRange(r.trend);
+  return yOf(price, min, max);
+}
+const indAMarks = computed(() => {
+  const r = result.value;
+  if (!r || !r.indA || !r.indA.ok) return [];
+  const { min, max } = valueRange(r.trend);
+  return (r.indA.marks || []).map((m) => {
+    const off = minuteOffset(m.time);
+    return {
+      x: CH.x0 + (off / 240) * (CH.x1 - CH.x0),
+      y: yOf(m.price, min, max),
+      kind: m.kind,
+    };
+  });
+});
+
 // 最新价小红点
 const lastDot = computed(() => {
   const r = result.value;
@@ -638,6 +675,11 @@ function onChartDblClick() {
 .suggest-item .s-code { color: #5fb8f0; min-width: 52px; }
 .suggest-item .s-name { color: #d8dee9; flex: 1; }
 .suggest-item .s-mkt { color: #8a93a5; font-size: 10px; }
+.ind-panel { border-left: 3px solid #ffbb44; }
+.ind-panel .ind-title { color: #ffbb44; font-size: 13px; font-weight: 700; margin-bottom: 4px; }
+.ind-panel .ind-row.a { color: #ffcc88; font-size: 13px; margin-bottom: 2px; }
+.ind-panel .ind-row.b { color: #ffbb00; font-size: 13px; font-weight: 600; }
+.ind-mark { font-size: 11px; font-weight: 700; }
 .add-msg { font-size: 12px; margin-bottom: 6px; }
 .add-msg.ok { color: #22a45d; }
 .add-msg.err { color: #e04b4b; }

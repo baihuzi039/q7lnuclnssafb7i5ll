@@ -86,6 +86,7 @@ type FenshiAnalysisResult struct {
 	Signals []FenshiSignal `json:"signals"`
 	Advice  string         `json:"advice"`
 	AdviceV2 *FenshiAdvice `json:"adviceV2,omitempty"` // v9f.22 规则引擎建议
+	IndA    *FenshiIndA    `json:"indA,omitempty"`    // v9f.28 通达信分时源码A
 	ErrMsg  string         `json:"errMsg"` // 非空表示分析失败及原因
 }
 
@@ -272,6 +273,7 @@ func fenshiAnalyzeFromTencent(stockCode string) (*FenshiAnalysisResult, error) {
 	env := fenshiIndexEnv()
 	adv := fenshiRunRulesAdv(fenshiRuleIn{Trend: res.Trend, PrevClose: dctx.PrevClose, PrevHigh: dctx.PrevHigh, PrevLow: dctx.PrevLow, MA5: dctx.MA5, MA20: dctx.MA20, ShPct: env.ShPct, SzPct: env.SzPct, CybPct: env.CybPct, Now: time.Now(), Pos: dctx.Pos, BelowMA10: dctx.MA10 > 0 && dctx.PrevClose < dctx.MA10, BelowMA20: dctx.MA20 > 0 && dctx.PrevClose < dctx.MA20, IsZT: dctx.IsZT, PrevVol: dctx.PrevVol}, auctionMemoGet())
 	res.AdviceV2 = &adv
+	fenshiApplyIndicatorA(res)
 	// 兑底说明
 	res.Advice = fmt.Sprintf("[腾讯源] %s 昨收%.2f 今开%.2f 现价%.2f（量比不可用，其余指标正常）", name, preClose, openPx, nowPx)
 	return res, nil
@@ -878,6 +880,7 @@ func fenshiAnalyzeCore(stockCode string) *FenshiAnalysisResult {
 		env := fenshiIndexEnv()
 		adv := fenshiRunRulesAdv(fenshiRuleIn{Trend: resE.Trend, PrevClose: dctx.PrevClose, PrevHigh: dctx.PrevHigh, PrevLow: dctx.PrevLow, MA5: dctx.MA5, MA20: dctx.MA20, ShPct: env.ShPct, SzPct: env.SzPct, CybPct: env.CybPct, Now: time.Now(), Pos: dctx.Pos, BelowMA10: dctx.MA10 > 0 && dctx.PrevClose < dctx.MA10, BelowMA20: dctx.MA20 > 0 && dctx.PrevClose < dctx.MA20, IsZT: dctx.IsZT, PrevVol: dctx.PrevVol}, auctionMemoGet())
 		resE.AdviceV2 = &adv
+		fenshiApplyIndicatorA(resE)
 	}
 	return resE
 }
@@ -1112,6 +1115,7 @@ func fenshiAnalyzeFromSina(stockCode string) (*FenshiAnalysisResult, error) {
 	env := fenshiIndexEnv()
 	adv := fenshiRunRulesAdv(fenshiRuleIn{Trend: res.Trend, PrevClose: dctx.PrevClose, PrevHigh: dctx.PrevHigh, PrevLow: dctx.PrevLow, MA5: dctx.MA5, MA20: dctx.MA20, ShPct: env.ShPct, SzPct: env.SzPct, CybPct: env.CybPct, Now: time.Now(), Pos: dctx.Pos, BelowMA10: dctx.MA10 > 0 && dctx.PrevClose < dctx.MA10, BelowMA20: dctx.MA20 > 0 && dctx.PrevClose < dctx.MA20, IsZT: dctx.IsZT, PrevVol: dctx.PrevVol}, auctionMemoGet())
 	res.AdviceV2 = &adv
+	fenshiApplyIndicatorA(res)
 	res.Advice = fmt.Sprintf("[新浪源·5分钟级] %s 昨收%.2f 今开%.2f 现价%.2f（分钟粒度较粗、量比不可用，趋势判断仍有效）", tcode, preClose, openPx, nowPx)
 	return res, nil
 }
