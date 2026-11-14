@@ -1224,7 +1224,7 @@ func (a *App) domReady(ctx context.Context) {
 				syncDailyKLineJob(a.ctx)
 				// 同步完成后：扫描策略收件箱 + 回填批次涨幅
 				a.ImportTrackInboxFolder()
-				FillAllTrackHoldings()
+				FillAllTrackHoldings(false)
 			}()
 		})
 		// [local-patch] v8-track 首次启动预置策略套件
