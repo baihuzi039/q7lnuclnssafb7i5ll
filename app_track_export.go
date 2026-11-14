@@ -757,7 +757,7 @@ func (a *App) BackfillTrackRange(strategyName, startDate, endDate string) string
 		logger.SugaredLogger.Infof("补齐 %s %s: %s", strategyName, day, msg)
 		created++
 	}
-	FillAllTrackHoldings()
+	FillAllTrackHoldings(false)
 	out := fmt.Sprintf("补齐完成[%s %s ~ %s]: 新建批次%d个, 无信号日%d个, 已有跳过%d个, 持仓涨幅已回填",
 		strategyName, sd.Format("2006-01-02"), ed.Format("2006-01-02"), created, empty, skip)
 	if len(notes) > 0 && len(notes) <= 8 {

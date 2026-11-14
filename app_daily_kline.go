@@ -201,8 +201,11 @@ func syncDailyKLineJob(ctx context.Context) {
 				rowSum.Add(int64(n))
 				onGoingFail.Store(0)
 			} else {
+				// [v9f.17.22] n==0 也记入当日失败集：北交所等不被数据源覆盖的票每轮"成功"0行、
+				// 库内最新日不前进 → 每轮被判待同步重复下载（日志铁证：730只×3轮=182500行×3）。
+				// 记忆后当日内不再重拉，次日自动重试。
 				failCount.Add(1)
-				syncFailures.Store(code, time.Now().Format("2006-01-02")) // [v9f.17.19] 记入当日失败集
+				syncFailures.Store(code, time.Now().Format("2006-01-02"))
 				if onGoingFail.Add(1) >= 20 {
 					aborted.Store(true)
 					logger.SugaredLogger.Errorf("日线同步熔断：连续%d只拉取失败，判定网络不可用，中止本轮，待恢复后重试", onGoingFail.Load())

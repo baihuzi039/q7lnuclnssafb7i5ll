@@ -588,7 +588,7 @@ function refresh() {
     if (window.$message && msg) window.$message[type](msg, { duration: 5000 })
   }
   const timer = setTimeout(() => finish(null), 120000)
-  window.go.main.App.FillAllTrackHoldings().then(() => {
+  window.go.main.App.FillAllTrackHoldings(false).then(() => {
     clearTimeout(timer)
     finish('回填完成，表格已是最新', 'success')
   }).catch((e) => {
@@ -624,8 +624,11 @@ const fixingNames = ref(false)
 function fixNames() {
   fixingNames.value = true
   RefreshAllTrackNames().then((res) => {
+    // [v9f.17.22] 名称修正后强制重算回填：顺带补上历史空格（当年库缺数据遗留的），一举两得
+    return window.go.main.App.FillAllTrackHoldings(true)
+  }).then((res) => {
     fixingNames.value = false
-    if (window.$message) window.$message.success(res || '完成')
+    if (window.$message) window.$message.success('名称修正+强制回填完成，历史空格已补', { duration: 5000 })
     refresh()
   }).catch(() => { fixingNames.value = false })
 }

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"go-stock/backend/data"
@@ -117,8 +118,12 @@ func FillBatchHoldings(batchID uint) {
 
 // FillAllTrackHoldings [v9f.17.1] 全量幂等回填：每天对所有批次重算，已收盘日期的数据当场补全
 // （旧逻辑只回填 filled_days<8 的票，历史批次一旦错过就永远缺数据）
-func FillAllTrackHoldings() {
+// [v9f.17.22] force=true 强制重算：忽略幂等跳过，对历史空格（当年库缺数据留下的）全量重填
+var forceBackfill atomic.Bool
+
+func FillAllTrackHoldings(force bool) {
 	defer PanicHandler()
+	forceBackfill.Store(force)
 	// [v9f.17.17] 回填纯本地化：一律不发HTTP。联网校准/补数全部收敛到日线同步任务
 	// (syncDailyKLineJob 开头已有基准票校准)，启动链保证「先同步后回填」，
 	// 回填开始时库已是最新。库缺数据时按缺失/停牌处理，等下次同步补齐。
@@ -159,7 +164,7 @@ func FillAllTrackHoldings() {
 		}()
 		if didUpdate {
 			filled++
-		} else {
+		} else if !force {
 			failed = append(failed, items[i].StockCode+"@"+batch.TradeDate)
 		}
 	}
@@ -346,8 +351,10 @@ func fillBpFields(item *models.TrackItem, batch models.TrackBatch) {
 	}
 	var prevRow models.DailyKLine
 	hasPrev := db.Dao.Where("stock_code = ? AND day < ?", item.StockCode, buyRow.Day).Order("day DESC").First(&prevRow).Error == nil
+	// [v9f.17.22] forceRecalc 由 FillAllTrackHoldings(force) 透传：true 时已填格也按最新库数据覆盖
+	forceRecalc := forceBackfill.Load()
 	setIfF := func(dst *float64, v float64) {
-		if *dst == 0 && v != 0 {
+		if (*dst == 0 && v != 0) || (forceRecalc && *dst != v) {
 			*dst = v
 		}
 	}
