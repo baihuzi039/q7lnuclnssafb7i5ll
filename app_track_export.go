@@ -7,10 +7,14 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/duke-git/lancet/v2/strutil"
 	"github.com/xuri/excelize/v2"
+	"golang.org/x/text/encoding/simplifiedchinese"
+
 	"go-stock/backend/data"
 	"go-stock/backend/db"
 	"go-stock/backend/logger"
@@ -777,6 +781,128 @@ func (a *App) BackfillTrackRange(strategyName, startDate, endDate string) string
 // [v9f] 复用共享 resty client；secid 转换在 data 包内部做（避免跨包引未导出字段）
 // CI#61修复: EastMoneyKLineApi 是 data 包类型，main 包直接引用需带包名；
 // convertStockCode 未导出，改由 data 包新增导出函数 ConvertStockCodeToEMSecid 承接
+// ForceRecalcTrack [v9f.17.27] 独立强制重算入口：纯本地补历史空格，与名称核对完全解耦
+func (a *App) ForceRecalcTrack() string {
+	defer PanicHandler()
+	FillAllTrackHoldings(true)
+	logger.SugaredLogger.Infof("强制重算回填完成(独立按钮触发)")
+	return "强制重算完成：历史空格已按本地库最新数据补齐"
+}
+
+// TrackNameCheck [v9f.17.26] 名称核对记录：防重复核对（24h内已核对直接跳过）
+type TrackNameCheck struct {
+	ID        uint      `gorm:"primaryKey" json:"id"`
+	StockCode string    `gorm:"index;size:12" json:"stockCode"`
+	StockName string    `gorm:"size:32" json:"stockName"`
+	Source    string    `gorm:"size:16" json:"source"` // eastmoney / tencent / sina
+	CheckedAt time.Time `json:"checkedAt"`
+}
+
+// nameSourceOrder 多源顺序与当日失败记忆（防风控：失败的源当天不再试）
+var nameSourceOrder = []string{"eastmoney", "tencent", "sina"}
+var nameSourceFailed sync.Map   // source -> "2006-01-02"（当日失败记忆）
+var nameSourceLock atomic.Int32 // 当前活跃源下标
+
+// fetchNameBySource 按源取实时名称
+func fetchNameBySource(source, stockCode string) string {
+	switch source {
+	case "eastmoney":
+		return eastMoneyRealtimeName(stockCode)
+	case "tencent":
+		return tencentRealtimeName(stockCode)
+	case "sina":
+		return sinaRealtimeName(stockCode)
+	}
+	return ""
+}
+
+// realtimeNameAuto 多源自动切换取名称：当前源连续失败5只自动切下一源；全源当日失败则直接返回空（不再打请求）
+func realtimeNameAuto(stockCode string) string {
+	start := int(nameSourceLock.Load())
+	for k := 0; k < len(nameSourceOrder); k++ {
+		idx := (start + k) % len(nameSourceOrder)
+		src := nameSourceOrder[idx]
+		if v, ok := nameSourceFailed.Load(src); ok && v.(string) == time.Now().Format("2006-01-02") {
+			continue // 当日已判死的源跳过
+		}
+		name := fetchNameBySource(src, stockCode)
+		if name != "" {
+			if int32(idx) != nameSourceLock.Load() {
+				logger.SugaredLogger.Infof("名称源切换: %s → %s", nameSourceOrder[nameSourceLock.Load()], src)
+				nameSourceLock.Store(int32(idx))
+			}
+			return name
+		}
+		// 该源失败计数（简化：连续5只失败即判死当日，由调用侧批量统计驱动）
+		nameFailsMu.Lock()
+		nameSourceFails[src]++
+		fails := nameSourceFails[src]
+		nameFailsMu.Unlock()
+		if fails >= 5 {
+			nameSourceFailed.Store(src, time.Now().Format("2006-01-02"))
+			logger.SugaredLogger.Warnf("名称源 %s 连续%d只失败，当日判死（防风控），切换下一源", src, fails)
+		}
+	}
+	return "" // 全源不可用
+}
+
+var nameSourceFails = map[string]int{}
+var nameFailsMu sync.Mutex
+
+// sinaRealtimeName [v9f.17.26] 新浪实时行情取名称（第三备源）
+func sinaRealtimeName(stockCode string) string {
+	market := "sz"
+	if strings.HasPrefix(stockCode6(stockCode), "6") {
+		market = "sh"
+	}
+	u := "https://hq.sinajs.cn/list=" + market + stockCode6(stockCode)
+	resp, err := data.SharedHTTPClient.R().
+		SetHeader("Referer", "https://finance.sina.com.cn").
+		SetHeader("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)").
+		Get(u)
+	if err != nil || resp == nil || len(resp.Body()) < 20 {
+		return ""
+	}
+	body, err := simplifiedchinese.GB18030.NewDecoder().Bytes(resp.Body())
+	if err != nil {
+		return ""
+	}
+	// var hq_str_sz002274="创世纪,4.62,...
+	i := strings.Index(body, "\"")
+	if i < 0 {
+		return ""
+	}
+	fields := strings.Split(body[i+1:], ",")
+	if len(fields) > 0 && fields[0] != "" {
+		return fields[0]
+	}
+	return ""
+}
+
+// tencentRealtimeName [v9f.17.24] 腾讯实时行情取名称（东财被断时的备用源；qt.gtimg.cn 独立于东财线路）
+func tencentRealtimeName(stockCode string) string {
+	market := "sz"
+	if strings.HasPrefix(stockCode6(stockCode), "6") {
+		market = "sh"
+	}
+	u := "https://qt.gtimg.cn/q=" + market + c
+	resp, err := data.SharedHTTPClient.R().Get(u)
+	if err != nil || resp == nil || len(resp.Body()) < 40 {
+		return ""
+	}
+	// 返回 GBK 编码：v_shXXXXXX="51~名称~代码~...（复用项目已有 simplifiedchinese 解码）
+	body, err := simplifiedchinese.GB18030.NewDecoder().Bytes(resp.Body())
+	if err != nil {
+		return ""
+	}
+	q := body[strings.Index(body, "\"")+1:]
+	fields := strings.Split(q, "~")
+	if len(fields) > 1 && fields[1] != "" {
+		return fields[1]
+	}
+	return ""
+}
+
 func eastMoneyRealtimeName(stockCode string) string {
 	secid := data.ConvertStockCodeToEMSecid(stockCode)
 	if secid == "" {
@@ -801,8 +927,19 @@ func eastMoneyRealtimeName(stockCode string) string {
 }
 
 // RefreshTrackItemName 回填前刷新单票名称（新名非空且与旧名不同才写库）
+// [v9f.17.26] 24h内已核对的票直接跳过（回填时不再逐票打接口），核对走多源自动切换
 func RefreshTrackItemName(item *models.TrackItem) {
-	name := eastMoneyRealtimeName(item.StockCode)
+	var rec TrackNameCheck
+	if err := db.Dao.Where("stock_code = ?", stockCode6(item.StockCode)).Order("checked_at DESC").First(&rec).Error; err == nil {
+		if time.Since(rec.CheckedAt) < 24*time.Hour {
+			return // 24h内已核对过，跳过
+		}
+	}
+	name := realtimeNameAuto(item.StockCode)
+	if strutil.IsNotBlank(name) {
+		db.Dao.Where("stock_code = ?", stockCode6(item.StockCode)).Delete(&TrackNameCheck{})
+		db.Dao.Create(&TrackNameCheck{StockCode: stockCode6(item.StockCode), StockName: name, Source: nameSourceOrder[nameSourceLock.Load()], CheckedAt: time.Now()})
+	}
 	if strutil.IsNotBlank(name) && name != item.StockName {
 		logger.SugaredLogger.Infof("股票名称修正: %s %s → %s", item.StockCode, item.StockName, name)
 		item.StockName = name
@@ -815,24 +952,55 @@ func RefreshTrackItemName(item *models.TrackItem) {
 // RefreshAllTrackNames [v9f] 一次性修正全部批次存量错名（前端"修正名称"按钮；也供回填调用）
 func (a *App) RefreshAllTrackNames() string {
 	defer PanicHandler()
+	// [v9f.17.26] 重置当日源失败状态从上轮遗留（跨日由日期比对自动清理）
 	var items []models.TrackItem
 	db.Dao.Find(&items)
 	fixed, total := 0, len(items)
+	skipped := 0
 	seen := map[string]bool{}
+	today := time.Now()
 	for i := range items {
 		code := stockCode6(items[i].StockCode)
 		if seen[code] {
-			continue // 同代码只查一次实时接口
+			continue
 		}
 		seen[code] = true
-		before := items[i].StockName
-		RefreshTrackItemName(&items[i])
-		if items[i].StockName != before {
-			fixed++
+		// B: 24h内已核对 → 跳过联网（防重复修正+防风控）
+		var rec TrackNameCheck
+		if err := db.Dao.Where("stock_code = ?", code).Order("checked_at DESC").First(&rec).Error; err == nil {
+			if today.Sub(rec.CheckedAt) < 24*time.Hour {
+				skipped++
+				continue
+			}
 		}
-		time.Sleep(30 * time.Millisecond) // 控频
+		before := items[i].StockName
+		name := realtimeNameAuto(code) // C: 多源自动切换
+		if strutil.IsNotBlank(name) && name != items[i].StockName {
+			logger.SugaredLogger.Infof("股票名称修正: %s %s → %s", items[i].StockCode, items[i].StockName, name)
+			items[i].StockName = name
+			db.Dao.Model(&items[i]).Update("stock_name", name)
+			db.Dao.Model(&data.StockBasic{}).Where("ts_code LIKE ?", code+"%").Update("name", name)
+		}
+		if strutil.IsNotBlank(name) {
+			db.Dao.Where("stock_code = ?", code).Delete(&TrackNameCheck{})
+			db.Dao.Create(&TrackNameCheck{StockCode: code, StockName: name, Source: nameSourceOrder[nameSourceLock.Load()], CheckedAt: today})
+			if name != before {
+				fixed++
+			}
+		}
+		time.Sleep(50 * time.Millisecond) // 控频（防风控）
 	}
-	msg := fmt.Sprintf("名称核对完成: 共%d只(去重%d)，修正%d只", total, len(seen), fixed)
+	func() {
+		nameFailsMu.Lock()
+		for k := range nameSourceFails {
+			delete(nameSourceFails, k)
+		}
+		nameFailsMu.Unlock()
+	}() // 本轮结束清零连续失败计数（跨轮不累计）
+	msg := fmt.Sprintf("名称核对完成: 共%d只(去重%d)，修正%d只，24h内已核对跳过%d只，联网%d只", total, len(seen), fixed, skipped, len(seen)-skipped)
 	logger.SugaredLogger.Infof("%s", msg)
+	// A: 强制重算无条件执行（纯本地，不依赖名称核对成败）
+	FillAllTrackHoldings(true)
+	logger.SugaredLogger.Infof("强制重算回填完成(修正名称后续步)")
 	return msg
 }

@@ -67,7 +67,8 @@
           </template>
           <n-button size="small" type="warning" ghost :loading="exporting" @click="exportCSV">导出 CSV</n-button>
           <n-button size="small" type="success" ghost :loading="exportingXlsx" @click="exportXlsxTop">导出 Excel</n-button>
-          <n-tooltip trigger="hover"><template #trigger><n-button size="small" type="warning" ghost :loading="fixingNames" @click="fixNames">修正名称</n-button></template>用东财实时行情核对全部批次股票名称并修正（治改名/旧名单导致的错名，几千只约需几分钟）</n-tooltip>
+          <n-tooltip trigger="hover"><template #trigger><n-button size="small" type="success" ghost :loading="forcing" @click="forceRecalc">强制重算</n-button></template>按本地数据库全量重算所有批次持仓涨幅并补齐历史空格（纯本地，秒级，日常补数据用这个）</n-tooltip>
+          <n-tooltip trigger="hover"><template #trigger><n-button size="small" type="warning" ghost :loading="fixingNames" @click="fixNames">改名修正(罕用)</n-button></template>仅当个别股票改名后显示异常时使用：多源核对名称（东财→腾讯→新浪），24小时内不重复核对</n-tooltip>
           <n-button size="small" :loading="refreshing" @click="refresh">{{ refreshing ? '回填中…' : '刷新' }}</n-button>
         </n-space>
         <n-text depth="3" style="font-size: 12px;">
@@ -621,14 +622,21 @@ function openInboxDir() {
 const backfilling = ref(false)
 // [v9f] 修正名称
 const fixingNames = ref(false)
+// [v9f.17.27] 强制重算：独立按钮，纯本地补历史空格
+const forcing = ref(false)
+function forceRecalc() {
+  forcing.value = true
+  window.go.main.App.ForceRecalcTrack().then((res) => {
+    forcing.value = false
+    if (window.$message) window.$message.success(res || '强制重算完成', { duration: 5000 })
+    refresh()
+  }).catch(() => { forcing.value = false })
+}
 function fixNames() {
   fixingNames.value = true
   RefreshAllTrackNames().then((res) => {
-    // [v9f.17.22] 名称修正后强制重算回填：顺带补上历史空格（当年库缺数据遗留的），一举两得
-    return window.go.main.App.FillAllTrackHoldings(true)
-  }).then((res) => {
     fixingNames.value = false
-    if (window.$message) window.$message.success('名称修正+强制回填完成，历史空格已补', { duration: 5000 })
+    if (window.$message) window.$message.success(res || '完成', { duration: 5000 })
     refresh()
   }).catch(() => { fixingNames.value = false })
 }

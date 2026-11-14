@@ -318,6 +318,7 @@ func updateMultipleModel() {
 }
 
 func AutoMigrate() {
+	db.Dao.AutoMigrate(&TrackNameCheck{}) // [v9f.17.26] 名称核对记录
 	db.Dao.AutoMigrate(&data.StockInfo{})
 	db.Dao.AutoMigrate(&data.StockBasic{})
 	db.Dao.AutoMigrate(&data.FollowedStock{})

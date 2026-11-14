@@ -187,11 +187,8 @@ func FillAllTrackHoldings(force bool) {
 
 // fillItemHoldings 单票增量回填；返回是否有更新
 func fillItemHoldings(item *models.TrackItem, batch models.TrackBatch) bool {
-	// [v9f.17.14] 回填提速：逐票名称HTTP（每股1请求×几百票=几分钟卡在这是主因）改为——只在名称疑似过期时才请求：
-	// 批次建好后名称基本不变，改用「名单表名称」对比（本地零开销），不一致才调东财确认
-	if n := localNameFor(item.StockCode); n != "" && n != item.StockName {
-		RefreshTrackItemName(item) // 名单表与批次明细不一致，才走网络校准
-	}
+	// [v9f.17.27] 名称核对彻底移除：批次/名称/K线全在本地库，本地数据就是权威，
+	// 回填=纯本地计算，不做任何网络核对（用户定案：本地数据库肯定是正确的）
 	// [v9f.17.1] 不再跳过已填满票：全量重算保证数据完整（重算幂等，值不变不写库）
 	// [v9f.17.2] 停牌对齐：按全市场交易日历逐日对齐，个股停牌日标"停"，不挪位不空缺
 	// [v9f.17.4] 重写对齐：不再假设该股买入日当天有K线（停牌股 rows[0]是复牌日，旧逻辑指针错位导致次日开高永远填不上）
