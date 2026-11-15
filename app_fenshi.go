@@ -29,8 +29,8 @@ import (
 
 	utls "github.com/refraction-networking/utls"
 
-	"go-stock/backend/db"
 	stockdata "go-stock/backend/data"
+	"go-stock/backend/db"
 	"go-stock/backend/logger"
 )
 
@@ -83,11 +83,11 @@ type FenshiAnalysisResult struct {
 	Low         float64      `json:"low"`
 	Trend       []FenshiTick `json:"trend"` // 分时数据点
 
-	Signals []FenshiSignal `json:"signals"`
-	Advice  string         `json:"advice"`
-	AdviceV2 *FenshiAdvice `json:"adviceV2,omitempty"` // v9f.22 规则引擎建议
-	IndA    *FenshiIndA    `json:"indA,omitempty"`    // v9f.28 通达信分时源码A
-	ErrMsg  string         `json:"errMsg"` // 非空表示分析失败及原因
+	Signals  []FenshiSignal `json:"signals"`
+	Advice   string         `json:"advice"`
+	AdviceV2 *FenshiAdvice  `json:"adviceV2,omitempty"` // v9f.22 规则引擎建议
+	IndA     *FenshiIndA    `json:"indA,omitempty"`     // v9f.28 通达信分时源码A
+	ErrMsg   string         `json:"errMsg"`             // 非空表示分析失败及原因
 }
 
 // fenshiDialTLS 用 utls 模拟 Chrome TLS 指纹，防东财风控识别 Go 默认 crypto/tls 导致 EOF 断连
@@ -303,12 +303,7 @@ func (a *App) FenshiSearchSuggest(query string) []map[string]string {
 	if err != nil {
 		return out
 	}
-	// v9f.28.4：smartbox 返回的名称本身就是 \uXXXX 转义字面量（实测），包成字符串字面量直接 Unquote 即可解码
-	s0 := string(body)
-	if unq, err := strconv.Unquote(`"` + s0 + `"`); err == nil {
-		s0 = unq
-	}
-	s := s0
+	s := string(body)
 	i := strings.Index(s, "\"")
 	j := strings.LastIndex(s, "\"")
 	if i < 0 || j <= i {
@@ -324,10 +319,16 @@ func (a *App) FenshiSearchSuggest(query string) []map[string]string {
 		if mkt != "sh" && mkt != "sz" && mkt != "bj" {
 			continue // 过滤基金/港股等，分时模块只收 A 股
 		}
+		// v9f.28.5：smartbox 返回的名称本身是 \uXXXX 转义字面量（实测），必须逐条对名称字段 Unquote；
+		// 不能对整个响应体 Unquote（体里含引号等字符必失败，28.4 教训）
+		name := f[2]
+		if unq, err := strconv.Unquote(`"` + name + `"`); err == nil {
+			name = unq
+		}
 		out = append(out, map[string]string{
 			"market": mkt,
 			"code":   f[1],
-			"name":   f[2],
+			"name":   name,
 		})
 		if len(out) >= 8 {
 			break
@@ -722,10 +723,11 @@ var (
 
 // 去重保护，防止同一代码并发重复分析拖死前端（v9f.27.1：加时间戳，结果只缓存3秒，避免永久旧数据导致分时图不更新）
 type fenshiJobEntry struct {
-	res   *FenshiAnalysisResult
-	at    time.Time
-	done  bool
+	res  *FenshiAnalysisResult
+	at   time.Time
+	done bool
 }
+
 var fenshiJobInflight = map[string]*fenshiJobEntry{}
 
 func (a *App) FenshiAnalyzeStock(stockCode string) *FenshiAnalysisResult {
@@ -1127,10 +1129,10 @@ func fenshiAnalyzeFromSina(stockCode string) (*FenshiAnalysisResult, error) {
 
 // FenshiIndexEnv 大盘环境：上证/深成/创业板 实时涨跌
 type FenshiIndexEnv struct {
-	ShPct float64 `json:"shPct"`
-	SzPct float64 `json:"szPct"`
+	ShPct  float64 `json:"shPct"`
+	SzPct  float64 `json:"szPct"`
 	CybPct float64 `json:"cybPct"`
-	Ok    bool    `json:"ok"`
+	Ok     bool    `json:"ok"`
 }
 
 // FenshiDailyCtx 个股多周期历史上下文
@@ -1142,10 +1144,10 @@ type FenshiDailyCtx struct {
 	MA10      float64 `json:"ma10"`
 	MA20      float64 `json:"ma20"`
 	PrevVol   float64 `json:"prevVol"` // 昨日全天成交量（手，v9f.23 竞价量比基准）
-	High20    float64 `json:"high20"` // v9f.26：近20日最高价（位置过滤）
-	Low20     float64 `json:"low20"`  // v9f.26：近20日最低价
-	IsZT      bool    `json:"isZT"`   // v9f.26：昨日涨停（爆量比语境开关）
-	Pos       float64 `json:"pos"`    // v9f.26：现价在近20日区间的位置 0~1（1=最高）
+	High20    float64 `json:"high20"`  // v9f.26：近20日最高价（位置过滤）
+	Low20     float64 `json:"low20"`   // v9f.26：近20日最低价
+	IsZT      bool    `json:"isZT"`    // v9f.26：昨日涨停（爆量比语境开关）
+	Pos       float64 `json:"pos"`     // v9f.26：现价在近20日区间的位置 0~1（1=最高）
 	Ok        bool    `json:"ok"`
 }
 
