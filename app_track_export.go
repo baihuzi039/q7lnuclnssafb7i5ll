@@ -863,10 +863,11 @@ func sinaRealtimeName(stockCode string) string {
 	if err != nil || resp == nil || len(resp.Body()) < 20 {
 		return ""
 	}
-	body, err := simplifiedchinese.GB18030.NewDecoder().Bytes(resp.Body())
+	decoded, err := simplifiedchinese.GB18030.NewDecoder().Bytes(resp.Body())
 	if err != nil {
 		return ""
 	}
+	body := string(decoded)
 	// var hq_str_sz002274="创世纪,4.62,...
 	i := strings.Index(body, "\"")
 	if i < 0 {
@@ -885,16 +886,17 @@ func tencentRealtimeName(stockCode string) string {
 	if strings.HasPrefix(stockCode6(stockCode), "6") {
 		market = "sh"
 	}
-	u := "https://qt.gtimg.cn/q=" + market + c
+	u := "https://qt.gtimg.cn/q=" + market + stockCode6(stockCode)
 	resp, err := data.SharedHTTPClient.R().Get(u)
 	if err != nil || resp == nil || len(resp.Body()) < 40 {
 		return ""
 	}
 	// 返回 GBK 编码：v_shXXXXXX="51~名称~代码~...（复用项目已有 simplifiedchinese 解码）
-	body, err := simplifiedchinese.GB18030.NewDecoder().Bytes(resp.Body())
+	decoded, err := simplifiedchinese.GB18030.NewDecoder().Bytes(resp.Body())
 	if err != nil {
 		return ""
 	}
+	body := string(decoded)
 	q := body[strings.Index(body, "\"")+1:]
 	fields := strings.Split(q, "~")
 	if len(fields) > 1 && fields[1] != "" {
