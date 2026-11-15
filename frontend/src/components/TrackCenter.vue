@@ -626,11 +626,24 @@ const fixingNames = ref(false)
 const forcing = ref(false)
 function forceRecalc() {
   forcing.value = true
-  window.go.main.App.ForceRecalcTrack().then((res) => {
+  if (window.$message) window.$message.info('强制重算中（纯本地，通常几秒）…', { duration: 3000 })
+  // [v9f.17.29] 90秒兜底防永久转圈；拒绝时后端直接返回空串
+  let done = false
+  const fin = (msg, type) => {
+    if (done) return
+    done = true
     forcing.value = false
-    if (window.$message) window.$message.success(res || '强制重算完成', { duration: 5000 })
-    refresh()
-  }).catch(() => { forcing.value = false })
+    if (msg && window.$message) window.$message[type](msg, { duration: 5000 })
+    loadAll()
+  }
+  const timer = setTimeout(() => fin('强制重算超时未返回，请看日志排查', 'error'), 90000)
+  window.go.main.App.ForceRecalcTrack().then((res) => {
+    clearTimeout(timer)
+    fin(res || '强制重算完成', 'success')
+  }).catch((e) => {
+    clearTimeout(timer)
+    fin('强制重算失败: ' + e, 'error')
+  })
 }
 function fixNames() {
   fixingNames.value = true

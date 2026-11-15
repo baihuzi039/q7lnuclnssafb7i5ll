@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -121,8 +122,23 @@ func FillBatchHoldings(batchID uint) {
 // [v9f.17.22] force=true 强制重算：忽略幂等跳过，对历史空格（当年库缺数据留下的）全量重填
 var forceBackfill atomic.Bool
 
+// [v9f.17.29] 回填互斥锁：防止页面自动刷新与手动强制重算并发跑两个全量回填
+// （SQLite 写锁竞争 + forceBackfill 标志互踩 → 双双卡死、空格补不上）
+var fillMu sync.Mutex
+var fillRunning atomic.Bool
+
 func FillAllTrackHoldings(force bool) {
 	defer PanicHandler()
+	// 已有回填在跑：强制重算不允许被无声吞掉，直接提示；普通刷新静默放弃（结果等价）
+	if !fillMu.TryLock() {
+		if force {
+			logger.SugaredLogger.Warnf("强制重算被拒绝：已有回填任务在执行中，请等当前任务完成后再试")
+		}
+		return
+	}
+	defer fillMu.Unlock()
+	fillRunning.Store(true)
+	defer fillRunning.Store(false)
 	forceBackfill.Store(force)
 	// [v9f.17.17] 回填纯本地化：一律不发HTTP。联网校准/补数全部收敛到日线同步任务
 	// (syncDailyKLineJob 开头已有基准票校准)，启动链保证「先同步后回填」，
@@ -207,6 +223,12 @@ func fillItemHoldings(item *models.TrackItem, batch models.TrackBatch) bool {
 		logger.SugaredLogger.Warnf("回填跳过 %s@批次%s: 库内无买入日(%s)后任何K线", item.StockCode, batch.TradeDate, batch.TradeDate)
 		return false
 	}
+	defer func() {
+		// [v9f.17.29] 重算后仍全空诊断：rows有数据但1日格没填上 → 打印rows首尾日期定位对齐问题
+		if item.Hold1Pct == 0 && len(rows) > 0 {
+			logger.SugaredLogger.Warnf("重算后仍空 %s@批次%s: rows=%d 范围%s~%s", item.StockCode, batch.TradeDate, len(rows), rows[0].Day, rows[len(rows)-1].Day)
+		}
+	}()
 	// [v9f.17.7] 个股K线按日期索引（先建索引，后续缺行检测与对齐都用）
 	kByDay := map[string]models.DailyKLine{}
 	for _, r := range rows {
