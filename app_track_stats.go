@@ -283,20 +283,30 @@ func fillItemHoldings(item *models.TrackItem, batch models.TrackBatch) bool {
 			updated = true
 		}
 	}
+	// [v9f.17.30] 锚点修正：市场日历第0项不一定是该票的买入日——
+	// 停牌票/买入日数据未入库的票，rows[0].Day（该票实际第一根K线）才是真实锚点。
+	// 旧逻辑从市场日历[1]开始填"1日"格 → 错位一格（诊断铁证：002374 rows=11 范围10-30~11-13 但 1日格全空）。
+	anchorDay := rows[0].Day // 该票实际买入日（或复牌日）
+	anchorIdx := 0           // anchorDay 在市场日历中的下标
+	for i, d := range marketDays {
+		if d == anchorDay {
+			anchorIdx = i
+			break
+		}
+	}
 	// 复牌晚于买入日的天数也计入停牌（买入日~复牌日前一交易日）
 	suspends := []string{}
-	for mIdx, mDay := range marketDays {
-		if mIdx == 0 {
-			continue // 买入日本身不算持仓日
-		}
-		if mIdx-1 >= 8 { // 只填持仓1~8日
+	for mIdx := anchorIdx + 1; mIdx < len(marketDays); mIdx++ {
+		mDay := marketDays[mIdx]
+		slotIdx := mIdx - anchorIdx - 1 // 0-based 持仓日序号
+		if slotIdx >= 8 {               // 只填持仓1~8日
 			break
 		}
 		if r, has := kByDay[mDay]; has {
 			slots := []*float64{&item.Hold1Pct, &item.Hold2Pct, &item.Hold3Pct, &item.Hold4Pct,
 				&item.Hold5Pct, &item.Hold6Pct, &item.Hold7Pct, &item.Hold8Pct}
-			setVal2(slots[mIdx-1], pct(r.Close))
-			if mIdx == 1 { // 次日细节：开高低收（次日=市场第2个交易日）
+			setVal2(slots[slotIdx], pct(r.Close))
+			if slotIdx == 0 { // 次日细节：开高低收（次日=锚点后第一个交易日）
 				// [v9f.17.5] 兑底：Open/High 为 0（历史坏行/数据源缺失）时用 Close 兑底，格子不再空
 				no, nh := r.Open, r.High
 				if no <= 0 {
@@ -322,18 +332,18 @@ func fillItemHoldings(item *models.TrackItem, batch models.TrackBatch) bool {
 		item.SuspendDays = sd
 		updated = true
 	}
-	filled := len(marketDays) - 1
+	// [v9f.17.30] FilledDays 按锚点计：市场日历总长 - 锚点位置 - 1（锚点本身是买入日）
+	filled := len(marketDays) - anchorIdx - 1
 	if filled > 8 {
 		filled = 8
 	}
-	// [v9f.17.6] FilledDays 不再被尾部误判压低：取实际有K线的最大持仓日
+	// 取实际有K线的最大持仓日
 	maxReal := 0
-	for mIdx, mDay := range marketDays {
-		if mIdx == 0 {
-			continue
-		}
-		if _, has := kByDay[mDay]; has && mIdx > maxReal {
-			maxReal = mIdx
+	for mIdx := anchorIdx + 1; mIdx < len(marketDays); mIdx++ {
+		if _, has := kByDay[marketDays[mIdx]]; has {
+			if d := mIdx - anchorIdx; d > maxReal {
+				maxReal = d
+			}
 		}
 	}
 	if maxReal > filled {
