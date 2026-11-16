@@ -293,6 +293,8 @@ function onSwitchMode(m) {
   queryBatchIds.value = q.batchIds || []
   if (q.start) backfillStart.value = q.start
   if (q.end) backfillEnd.value = q.end
+  items.value = []               // [v9f.17.36] 清旧 mode 明细防残留
+  stat.value = {}
   setTimeout(() => { _restoring = false }, 0)
   checkedBatches.value = []
   const id = Number(activeStrategy.value)
@@ -545,6 +547,17 @@ function loadStrategies() {
   })
 }
 
+// [v9f.17.37] 中央兜底：activeStrategy/niuzhiMode 任何变化（无论来自哪个入口），
+// 同步清掉旧策略的明细与统计，查询叠加按当前 key 重新恢复——切换间隙绝不显示旧策略数据。
+watch([activeStrategy, niuzhiMode], () => {
+  if (_restoring || !activeStrategy.value) return
+  items.value = []
+  stat.value = {}
+  const q = loadQueryState()
+  queryRows.value = q.rows || []
+  queryBatchIds.value = q.batchIds || []
+})
+
 function onSwitchStrategy(key) {
   checkedBatches.value = []
   // [v9f.17.33] 根因修复：tab 原为 v-model 双向绑定，进入本函数时 activeStrategy 已是【新】策略，
@@ -559,6 +572,8 @@ function onSwitchStrategy(key) {
   queryBatchIds.value = q.batchIds || []
   if (q.start) backfillStart.value = q.start
   if (q.end) backfillEnd.value = q.end
+  items.value = []               // [v9f.17.36] 先清旧策略明细，防止加载间隙显示旧策略批次
+  stat.value = {}                // [v9f.17.36] 先清旧策略统计，防切换残留（加载完成由 refresh 回填）
   setTimeout(() => { _restoring = false }, 0)
   // v9c.4: 共用date-picker但各tab记住各自日期——切tab时把组件值切到该tab上次用的
   const s = strategies.value.find(x => String(x.id) === activeStrategy.value)
@@ -576,13 +591,21 @@ function onSwitchStrategy(key) {
 // ③「回填」手动按钮：只对当前策略批次幂等补漏（FillTrackHoldingsForStrategy）
 // ④「补齐历史」按钮：重演引擎建缺批次 + 全量幂等补漏（FillAllTrackHoldings(false)）
 // 打开页面/切策略不再触发任何回填，查询与回填完全独立。
+// [v9f.17.37] 归属守卫：切换策略/模式后，旧策略的在途请求（如切换前 syncDone 触发的刷新）
+// 可能晚于新策略请求返回，把旧批次明细/统计覆盖回表格——用户看到"一直显示旧批次、清空又回来"。
+// 每个回调捕获发起时的归属（策略+模式），返回时归属已变则丢弃。
+function curOwner() {
+  return String(activeStrategy.value || '') + ':' + (isNiuZhiTab.value ? (niuzhiMode.value || '标准') : '')
+}
 function refresh() {
   if (!activeStrategy.value) return
   const id = Number(activeStrategy.value)
   const mode = niuzhiMode.value || ''
-  GetTrackBatches(id).then((res) => { batches.value = res || [] })
-  window.go.main.App.GetRecentTrackItemsMode(id, isNiuZhiTab.value ? mode : '', 500).then((res) => { items.value = res || [] })
+  const owner = curOwner()
+  GetTrackBatches(id).then((res) => { if (curOwner() === owner) batches.value = res || [] })
+  window.go.main.App.GetRecentTrackItemsMode(id, isNiuZhiTab.value ? mode : '', 500).then((res) => { if (curOwner() === owner) items.value = res || [] })
   GetTrackStats().then((res) => {
+    if (curOwner() !== owner) return
     stat.value = (res || []).find(s => String(s.strategyId) === activeStrategy.value) || {}
   })
 }
@@ -734,6 +757,7 @@ async function doQueryBatches() {
     return
   }
   querying.value = true
+  const ownerAtQuery = curOwner()
   try {
     const have = new Set(queryRows.value.map(r => r.id))
     const got = []
@@ -747,6 +771,7 @@ async function doQueryBatches() {
         got.push(Object.assign({}, r, { tradeDate: b.tradeDate }))
       }
     }
+    if (curOwner() !== ownerAtQuery) { if (window.$message) window.$message.info('查询期间已切换策略，结果已丢弃'); return }
     queryRows.value = queryRows.value.concat(got)
     saveQueryState()
     const okMsg = `查询到 ${inRange.length} 个批次，新增 ${got.length} 条明细（多次查询增量叠加，点「清空查询」恢复）`
@@ -763,8 +788,9 @@ function clearQuery() {
   queryRows.value = []
   queryBatchIds.value = []
   items.value = [] // 默认明细也清掉：清空=全空表格
+  stat.value = {}  // [v9f.17.36] 统计栏（数据分析）同步清空：清空=页面全空
   saveQueryState()
-  const msg = '已清空：全部批次明细已清除，表格空白。需要数据请重新查询或点「刷新」恢复默认明细'
+  const msg = '已清空：全部批次明细与统计已清除，表格空白。点「恢复最近记录」可恢复'
   if (window.$message) window.$message.info(msg, { duration: 6000 })
   else alert(msg) // [v9f.17.33] 兜底
 }
@@ -840,15 +866,8 @@ function delCheckedBatches() {
 }
 
 onMounted(() => {
-  // [v9f.17.8b] 挂载后二次恢复查询状态（防 setup 阶段时序问题）
-  setTimeout(() => {
-    const q2 = loadQueryState()
-    if ((q2.rows || []).length && !queryRows.value.length) {
-      queryRows.value = q2.rows
-      queryBatchIds.value = q2.batchIds || []
-      console.log('[trackQuery] 挂载二次恢复 rows=', q2.rows.length)
-    }
-  }, 300)
+  // [v9f.17.37] 删除"挂载后300ms二次恢复"：它会把用户刚清空的查询行重新注入（清空→又回来了的来源之一）。
+  // 恢复已由 setup 阶段 loadQueryState + 中央 watch 覆盖。
   loadStrategies()
   EventsOn('dailyKLineSyncDone', () => { refresh() })
 })
