@@ -9,7 +9,7 @@
             <n-button size="small" type="primary" ghost>自定义 ▾</n-button>
           </n-dropdown>
         </div>
-        <n-tabs type="segment" v-model:value="activeStrategy" @update:value="onSwitchStrategy">
+        <n-tabs type="segment" :value="activeStrategy" @update:value="onSwitchStrategy">
           <n-tab v-for="s in builtinStrategies" :key="s.id" :name="String(s.id)">{{ s.name }}<n-text depth="3" style="font-size:12px; margin-left:6px;">批次:{{ latestBatchDateMap[s.id] || '无' }}</n-text></n-tab>
           <n-tab v-if="activeIsCustom" :name="activeStrategy">{{ activeStrategyName }}<n-text depth="3" style="font-size:12px; margin-left:6px;">批次:{{ latestBatchDateMap[activeStrategy] || '无' }}</n-text></n-tab>
         </n-tabs>
@@ -45,8 +45,9 @@
             <!-- v9c.3: 两tab共用同一个date-picker实例(一夜上实测正常, 避免牛指重复实例的未知问题) -->
             <n-date-picker v-model:value="overnightDateTs" type="date" size="small" style="width: 150px"
                            :is-date-disabled="disableFutureDates" placeholder="选股日期" />
-            <n-select v-if="isNiuZhiTab" v-model:value="niuzhiMode" size="small" style="width: 100px"
-                      :options="[{label:'严选',value:'严选'},{label:'标准',value:'标准'},{label:'全勤',value:'全勤'}]" />
+            <n-select v-if="isNiuZhiTab" :value="niuzhiMode" size="small" style="width: 100px"
+                      :options="[{label:'严选',value:'严选'},{label:'标准',value:'标准'},{label:'全勤',value:'全勤'}]"
+                      @update:value="onSwitchMode" />
             <n-button v-if="isOvernightTab" size="small" type="error" ghost :loading="overnightLoading" @click="runOvernight">一夜选股(14:50后)</n-button>
             <n-button v-if="isOvernightTab" size="small" type="warning" ghost :loading="overnightCloseLoading" @click="runOvernightClose">收盘记录</n-button>
             <n-button v-if="isNiuZhiTab" size="small" type="error" ghost :loading="niuzhiLoading" @click="runNiuZhi">牛指选股(收盘后)</n-button>
@@ -280,14 +281,24 @@ const isNiuZhiTab = computed(() => {
   const s = strategies.value.find(x => String(x.id) === activeStrategy.value)
   return !!s && /牛指/.test(s.name || '')
 })
-// [v9f.17.16] 牛指模式切换：批次表与明细立即按新模式重载
-watch(niuzhiMode, () => {
-  if (!isNiuZhiTab.value || !activeStrategy.value) return
+// [v9f.17.33] 牛指模式切换：与策略切换同源修复——先按【旧】mode key 保存查询状态，
+// 再切 mode，再按【新】mode key 恢复，最后重载列表。v-model 陷阱：watch 触发时 mode 已变。
+function onSwitchMode(m) {
+  if (!isNiuZhiTab.value || !activeStrategy.value) { niuzhiMode.value = m; return }
+  _restoring = true
+  saveQueryState()               // 旧 mode key
+  niuzhiMode.value = m
+  const q = loadQueryState()     // 新 mode key
+  queryRows.value = q.rows || []
+  queryBatchIds.value = q.batchIds || []
+  if (q.start) backfillStart.value = q.start
+  if (q.end) backfillEnd.value = q.end
+  setTimeout(() => { _restoring = false }, 0)
   checkedBatches.value = []
   const id = Number(activeStrategy.value)
   GetTrackBatches(id).then((res) => { batches.value = res || [] })
-  window.go.main.App.GetRecentTrackItemsMode(id, niuzhiMode.value || '', 500).then((res) => { items.value = res || [] })
-})
+  window.go.main.App.GetRecentTrackItemsMode(id, m || '', 500).then((res) => { items.value = res || [] })
+}
 
 function runNiuZhi() {
   niuzhiDateTs.value = overnightDateTs.value // 记住牛指本次用的日期
@@ -534,13 +545,16 @@ function loadStrategies() {
   })
 }
 
-function onSwitchStrategy() {
+function onSwitchStrategy(key) {
   checkedBatches.value = []
-  // [v9f.17.7] 先存当前策略状态，再切 key，再加载新策略状态
-  // [v9f.17.12] 全程 _restoring=true：恢复赋值不触发watch保存（根因：赋值触发watch→把A的rows存进B的key→互相污染，一夜切牛指批次日期都不变）
+  // [v9f.17.33] 根因修复：tab 原为 v-model 双向绑定，进入本函数时 activeStrategy 已是【新】策略，
+  // saveQueryState() 实际把旧策略的 rows/batchIds 写进了【新】策略的 key → 所有策略状态互相污染
+  // （同一份并集 rows、batchIds 攒满全部批次id → 查询"新增0条"外观失效、清空后被污染回来、批次不独立）。
+  // 修复：tab 改单向 :value 绑定，此处先按【旧】key 保存，再切 id，再按【新】key 读取。
   _restoring = true
-  saveQueryState()
-  const q = loadQueryState()
+  saveQueryState()               // 此时 activeStrategy 仍是旧策略 → 写旧 key
+  activeStrategy.value = key     // 现在才真正切换
+  const q = loadQueryState()     // 读新策略自己的 key
   queryRows.value = q.rows || []
   queryBatchIds.value = q.batchIds || []
   if (q.start) backfillStart.value = q.start
@@ -631,7 +645,8 @@ function fixNames() {
 // [v9f.11] 补齐历史：用户可选日期范围（默认最近10个自然日）；范围越长耗时越久，点击后提示
 // [v9f.13] 日期范围与查询状态持久化：切模块/重启后恢复上次状态
 // [v9f.14] 查询状态按策略隔离：一夜/牛指各自的查询结果互不串
-const LS_KEY = 'trackQueryState.v2'
+// [v9f.17.33] v2 各策略 key 已被切换污染（互相写入同一份rows），升 v3 抛弃旧状态重新独立积累
+const LS_KEY = 'trackQueryState.v3'
 function lsKey() {
   let k = LS_KEY + ':' + String(activeStrategy.value || '')
   if (isNiuZhiTab.value && niuzhiMode.value) k += ':' + niuzhiMode.value // [v9f.17.16] 牛指三模式查询互不串
@@ -734,8 +749,10 @@ async function doQueryBatches() {
     }
     queryRows.value = queryRows.value.concat(got)
     saveQueryState()
-    if (window.$dialog) window.$dialog.success({ title: '查询完成', content: `查询到 ${inRange.length} 个批次，本次新增 ${got.length} 条明细。多次查询增量叠加，点「清空查询」恢复。` })
-    else if (window.$message) window.$message.success(`查询到 ${inRange.length} 个批次，新增 ${got.length} 条明细`, { duration: 8000 })
+    const okMsg = `查询到 ${inRange.length} 个批次，新增 ${got.length} 条明细（多次查询增量叠加，点「清空查询」恢复）`
+    if (window.$dialog) window.$dialog.success({ title: '查询完成', content: okMsg })
+    else if (window.$message) window.$message.success(okMsg, { duration: 8000 })
+    else alert(okMsg) // [v9f.17.33] 兜底：组件缺失时绝不静默
   } catch(err) {
     if (window.$message) window.$message.error('查询失败: ' + err)
   } finally { querying.value = false }
@@ -744,7 +761,9 @@ function clearQuery() {
   queryRows.value = []
   queryBatchIds.value = []
   saveQueryState()
-  if (window.$message) window.$message.info('已清空查询结果，恢复默认列表')
+  const msg = '已清空查询结果，恢复默认列表'
+  if (window.$message) window.$message.info(msg)
+  else alert(msg) // [v9f.17.33] 兜底
 }
 function exportCSV() {
   exporting.value = true
