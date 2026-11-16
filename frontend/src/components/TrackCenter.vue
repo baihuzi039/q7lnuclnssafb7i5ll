@@ -64,13 +64,13 @@
             <n-date-picker v-model:value="backfillEnd" type="date" size="small" style="width:130px" :clearable="false" placement="bottom-start" />
             <n-tooltip trigger="hover"><template #trigger><n-button size="small" type="info" ghost :loading="backfilling" @click="doBackfill">补齐历史</n-button></template>重演选定日期范围（跳过周末/已有批次自动跳过；每日需跑一次本地扫描，范围越长耗时越久）</n-tooltip>
             <n-button size="small" type="primary" ghost :loading="querying" @click="doQueryBatches">查询批次</n-button>
-            <n-button size="small" type="error" ghost :disabled="!queryRows.length" @click="clearQuery">清空查询</n-button>
+            <n-tooltip trigger="hover"><template #trigger><n-button size="small" type="error" ghost :disabled="!queryRows.length && !items.length" @click="clearQuery">清空查询</n-button></template>清除表格上全部批次明细（含默认列表与历次查询叠加）；点「刷新」可恢复默认最近明细</n-tooltip>
           </template>
           <n-button size="small" type="warning" ghost :loading="exporting" @click="exportCSV">导出 CSV</n-button>
           <n-button size="small" type="success" ghost :loading="exportingXlsx" @click="exportXlsxTop">导出 Excel</n-button>
           <n-tooltip trigger="hover"><template #trigger><n-button size="small" type="success" ghost :loading="backfillingCur" @click="backfillQuery">回填</n-button></template>为查询服务：快速核查当前查询表格已存数据，漏的格补上（纯本地幂等，只补缺不改已填，秒级）</n-tooltip>
           <n-tooltip trigger="hover"><template #trigger><n-button size="small" type="warning" ghost :loading="fixingNames" @click="fixNames">改名修正(罕用)</n-button></template>仅当个别股票改名后显示异常时使用：多源核对名称（东财→腾讯→新浪），24小时内不重复核对</n-tooltip>
-          <n-button size="small" @click="refresh">刷新</n-button>
+          <n-tooltip trigger="hover"><template #trigger><n-button size="small" @click="refresh">恢复最近记录</n-button></template>恢复默认最近明细（最近500条）；已叠加的查询结果保留</n-tooltip>
         </n-space>
         <n-text depth="3" style="font-size: 12px;">
           自动流程：把选股结果 txt 丢进收件箱（文件名 = 策略名_日期.txt，如 一夜持股_20261107.txt），
@@ -483,7 +483,7 @@ function singleDayFromCum(cum, prevCum) {
 const displayColumns = computed(() => activeIsCustom.value ? bpColumns : itemColumns)
 const displayRows = computed(() => {
   if (activeIsCustom.value) return bpRows.value
-  // [v9f.12] 查询结果增量叠加在默认明细之上，点清空恢复
+  // [v9f.17.34] 查询结果增量叠加在默认明细之上；「清空查询」= 全部清除（含默认明细），「刷新」恢复默认
   return queryRows.value.length ? items.value.concat(queryRows.value) : items.value
 })
 
@@ -757,12 +757,15 @@ async function doQueryBatches() {
     if (window.$message) window.$message.error('查询失败: ' + err)
   } finally { querying.value = false }
 }
+// [v9f.17.34] 语义重定义（用户拍板）：「清空查询」= 清除表格上【全部批次】（默认明细+历次查询叠加），回到空白；
+// 不点清空时，多次查询的结果增量保留、跨切换保留。「回填」按钮同时清掉默认明细关联。
 function clearQuery() {
   queryRows.value = []
   queryBatchIds.value = []
+  items.value = [] // 默认明细也清掉：清空=全空表格
   saveQueryState()
-  const msg = '已清空查询结果，恢复默认列表'
-  if (window.$message) window.$message.info(msg)
+  const msg = '已清空：全部批次明细已清除，表格空白。需要数据请重新查询或点「刷新」恢复默认明细'
+  if (window.$message) window.$message.info(msg, { duration: 6000 })
   else alert(msg) // [v9f.17.33] 兜底
 }
 function exportCSV() {
