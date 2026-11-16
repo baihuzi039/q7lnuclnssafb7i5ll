@@ -67,9 +67,9 @@
           </template>
           <n-button size="small" type="warning" ghost :loading="exporting" @click="exportCSV">导出 CSV</n-button>
           <n-button size="small" type="success" ghost :loading="exportingXlsx" @click="exportXlsxTop">导出 Excel</n-button>
-          <n-tooltip trigger="hover"><template #trigger><n-button size="small" type="success" ghost :loading="forcing" @click="forceRecalc">强制重算</n-button></template>按本地数据库全量重算所有批次持仓涨幅并补齐历史空格（纯本地，秒级，日常补数据用这个）</n-tooltip>
+          <n-tooltip trigger="hover"><template #trigger><n-button size="small" type="success" ghost :loading="backfillingCur" @click="backfillQuery">回填</n-button></template>为查询服务：快速核查当前查询表格已存数据，漏的格补上（纯本地幂等，只补缺不改已填，秒级）</n-tooltip>
           <n-tooltip trigger="hover"><template #trigger><n-button size="small" type="warning" ghost :loading="fixingNames" @click="fixNames">改名修正(罕用)</n-button></template>仅当个别股票改名后显示异常时使用：多源核对名称（东财→腾讯→新浪），24小时内不重复核对</n-tooltip>
-          <n-button size="small" :loading="refreshing" @click="refresh">{{ refreshing ? '回填中…' : '刷新' }}</n-button>
+          <n-button size="small" @click="refresh">刷新</n-button>
         </n-space>
         <n-text depth="3" style="font-size: 12px;">
           自动流程：把选股结果 txt 丢进收件箱（文件名 = 策略名_日期.txt，如 一夜持股_20261107.txt），
@@ -556,45 +556,20 @@ function onSwitchStrategy() {
   refresh()
 }
 
-// [v9f.17.16] 刷新重构：先立即加载当前策略数据（切策略秒出该策略自己的批次），
-// 回填放后台跑，完成后自动重载一次。修复两个问题：
-// ①切策略表格数据要等回填完才换 → 看到的是上一个策略的旧数据（"切策略批次一样"）
-// ②回填慢/卡住时表格永远不更新、转圈无尽头
-const refreshing = ref(false)
+// [v9f.17.31] 刷新=纯读库：查询只显示本地已保存的最新回填结果，秒出不再转圈。
+// 回填触发点收敛为：①建新批次时自动回填该批次（CreateTrackBatchMode→FillBatchHoldings）
+// ②每日17:40同步后自动增量回填全部批次（app.go 定时链，幂等只补新空格，逐次落库保存）
+// ③「回填」手动按钮：只对当前策略批次幂等补漏（FillTrackHoldingsForStrategy）
+// ④「补齐历史」按钮：重演引擎建缺批次 + 全量幂等补漏（FillAllTrackHoldings(false)）
+// 打开页面/切策略不再触发任何回填，查询与回填完全独立。
 function refresh() {
-  if (!activeStrategy.value || refreshing.value) return
+  if (!activeStrategy.value) return
   const id = Number(activeStrategy.value)
-  // ① 立即加载（不等回填）
   const mode = niuzhiMode.value || ''
-  const loadAll = () => {
-    GetTrackBatches(id).then((res) => { batches.value = res || [] })
-    window.go.main.App.GetRecentTrackItemsMode(id, isNiuZhiTab.value ? mode : '', 500).then((res) => { items.value = res || [] })
-    GetTrackStats().then((res) => {
-      stat.value = (res || []).find(s => String(s.strategyId) === activeStrategy.value) || {}
-    })
-  }
-  loadAll()
-  // ② 回填后台跑，完成后重载
-  refreshing.value = true
-  if (window.$message) window.$message.info('正在回填涨幅数据（后台进行，完成后自动刷新表格）', { duration: 5000 })
-  // [v9f.17.19] 120秒兑底：回填纯本地只需几秒，promise 悬挂（后端被占用/异常）时自动解除转圈，不再永久卡住
-  let done = false
-  const finish = (msg, type) => {
-    if (done) return
-    done = true
-    refreshing.value = false
-    if (String(activeStrategy.value) !== String(id)) return // 已切走，丢弃过期结果
-    loadAll()
-    refreshing.value = false
-    if (window.$message && msg) window.$message[type](msg, { duration: 5000 })
-  }
-  const timer = setTimeout(() => finish(null), 120000)
-  window.go.main.App.FillAllTrackHoldings(false).then(() => {
-    clearTimeout(timer)
-    finish('回填完成，表格已是最新', 'success')
-  }).catch((e) => {
-    clearTimeout(timer)
-    finish('回填失败: ' + e, 'error')
+  GetTrackBatches(id).then((res) => { batches.value = res || [] })
+  window.go.main.App.GetRecentTrackItemsMode(id, isNiuZhiTab.value ? mode : '', 500).then((res) => { items.value = res || [] })
+  GetTrackStats().then((res) => {
+    stat.value = (res || []).find(s => String(s.strategyId) === activeStrategy.value) || {}
   })
 }
 
@@ -622,27 +597,27 @@ function openInboxDir() {
 const backfilling = ref(false)
 // [v9f] 修正名称
 const fixingNames = ref(false)
-// [v9f.17.27] 强制重算：独立按钮，纯本地补历史空格
-const forcing = ref(false)
-function forceRecalc() {
-  forcing.value = true
-  if (window.$message) window.$message.info('强制重算中（纯本地，通常几秒）…', { duration: 3000 })
-  // [v9f.17.29] 90秒兜底防永久转圈；拒绝时后端直接返回空串
+// [v9f.17.32] 回填按钮：为查询服务，只补当前策略批次缺失格（幂等，已填不动）
+const backfillingCur = ref(false)
+function backfillQuery() {
+  if (!activeStrategy.value) return
+  backfillingCur.value = true
+  if (window.$message) window.$message.info('回填中（纯本地核查补漏，通常几秒）…', { duration: 3000 })
   let done = false
   const fin = (msg, type) => {
     if (done) return
     done = true
-    forcing.value = false
+    backfillingCur.value = false
+    refresh()
     if (msg && window.$message) window.$message[type](msg, { duration: 5000 })
-    loadAll()
   }
-  const timer = setTimeout(() => fin('强制重算超时未返回，请看日志排查', 'error'), 90000)
-  window.go.main.App.ForceRecalcTrack().then((res) => {
+  const timer = setTimeout(() => fin('回填超时未返回，请看日志排查', 'error'), 120000)
+  window.go.main.App.FillTrackHoldingsForStrategy(Number(activeStrategy.value)).then((res) => {
     clearTimeout(timer)
-    fin(res || '强制重算完成', 'success')
+    fin(res || '回填完成', 'success')
   }).catch((e) => {
     clearTimeout(timer)
-    fin('强制重算失败: ' + e, 'error')
+    fin('回填失败: ' + e, 'error')
   })
 }
 function fixNames() {

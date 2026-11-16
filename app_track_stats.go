@@ -129,11 +129,8 @@ var fillRunning atomic.Bool
 
 func FillAllTrackHoldings(force bool) {
 	defer PanicHandler()
-	// 已有回填在跑：强制重算不允许被无声吞掉，直接提示；普通刷新静默放弃（结果等价）
+	// 已有回填在跑：静默放弃（结果等价，幂等）
 	if !fillMu.TryLock() {
-		if force {
-			logger.SugaredLogger.Warnf("强制重算被拒绝：已有回填任务在执行中，请等当前任务完成后再试")
-		}
 		return
 	}
 	defer fillMu.Unlock()
@@ -145,11 +142,33 @@ func FillAllTrackHoldings(force bool) {
 	// 回填开始时库已是最新。库缺数据时按缺失/停牌处理，等下次同步补齐。
 	var batchIDs []uint
 	db.Dao.Model(&models.TrackBatch{}).Pluck("id", &batchIDs) // 不再限90天：补齐历史后一次补全
-	if len(batchIDs) == 0 {
-		return
+	runFillHoldings(batchIDs, force)
+}
+
+// [v9f.17.32] FillTrackHoldingsForStrategy 为查询服务：只对当前策略的批次快速核查并补漏。
+// 幂等增量：已填的格子不动，只补缺失格（纯本地，秒级）。
+func (a *App) FillTrackHoldingsForStrategy(strategyID uint) string {
+	defer PanicHandler()
+	if !fillMu.TryLock() {
+		return "已有回填任务在执行中，请等当前任务完成后再试"
 	}
+	defer fillMu.Unlock()
+	fillRunning.Store(true)
+	defer fillRunning.Store(false)
+	forceBackfill.Store(false)
+	var batchIDs []uint
+	db.Dao.Model(&models.TrackBatch{}).Where("strategy_id = ?", strategyID).Pluck("id", &batchIDs)
+	if len(batchIDs) == 0 {
+		return "该策略暂无批次，无需回填"
+	}
+	return runFillHoldings(batchIDs, false)
+}
+
+// [v9f.17.32] runFillHoldings 共享回填循环：对给定批次幂等补漏（已填不动），完成后同步回测表。
+// 返回摘要文本。
+func runFillHoldings(batchIDs []uint, force bool) string {
 	var items []models.TrackItem
-	db.Dao.Where("batch_id IN ?", batchIDs).Find(&items) // 全量重算，fillItemHoldings 内部幂等
+	db.Dao.Where("batch_id IN ?", batchIDs).Find(&items) // fillItemHoldings 内部幂等
 	// [v9f.17.14] 批次对象预取（原来循环内逐票First查200+次DB，改1次全取）
 	var allBatches []models.TrackBatch
 	db.Dao.Find(&allBatches)
@@ -189,16 +208,15 @@ func FillAllTrackHoldings(force bool) {
 	var globalLast string
 	db.Dao.Model(&models.DailyKLine{}).Select("MAX(day)").Scan(&globalLast)
 	logger.SugaredLogger.Infof("库健康: 日线全局最新日=%s, 市场日历=库内distinct(day)", globalLast)
-	{
-		// [v9f.16] 回填后自动同步回测表：数据更新到哪，表就自动追到哪（幂等，无新增则不写盘）
-		for _, name := range []string{"一夜持股", "牛指T+1"} {
-			var st models.TrackStrategy
-			if err := db.Dao.Where("name = ?", name).First(&st).Error; err != nil {
-				continue
-			}
-			SyncStrategySheet(name)
+	// [v9f.16] 回填后自动同步回测表：数据更新到哪，表就自动追到哪（幂等，无新增则不写盘）
+	for _, name := range []string{"一夜持股", "牛指T+1"} {
+		var st models.TrackStrategy
+		if err := db.Dao.Where("name = ?", name).First(&st).Error; err != nil {
+			continue
 		}
+		SyncStrategySheet(name)
 	}
+	return fmt.Sprintf("回填完成：补漏%d只 / 未变化%d只（已存数据核查不动）", filled, len(failed))
 }
 
 // fillItemHoldings 单票增量回填；返回是否有更新

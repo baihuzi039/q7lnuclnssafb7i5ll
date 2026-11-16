@@ -781,14 +781,6 @@ func (a *App) BackfillTrackRange(strategyName, startDate, endDate string) string
 // [v9f] 复用共享 resty client；secid 转换在 data 包内部做（避免跨包引未导出字段）
 // CI#61修复: EastMoneyKLineApi 是 data 包类型，main 包直接引用需带包名；
 // convertStockCode 未导出，改由 data 包新增导出函数 ConvertStockCodeToEMSecid 承接
-// ForceRecalcTrack [v9f.17.27] 独立强制重算入口：纯本地补历史空格，与名称核对完全解耦
-func (a *App) ForceRecalcTrack() string {
-	defer PanicHandler()
-	FillAllTrackHoldings(true)
-	logger.SugaredLogger.Infof("强制重算回填完成(独立按钮触发)")
-	return "强制重算完成：历史空格已按本地库最新数据补齐"
-}
-
 // TrackNameCheck [v9f.17.26] 名称核对记录：防重复核对（24h内已核对直接跳过）
 type TrackNameCheck struct {
 	ID        uint      `gorm:"primaryKey" json:"id"`
@@ -1001,8 +993,8 @@ func (a *App) RefreshAllTrackNames() string {
 	}() // 本轮结束清零连续失败计数（跨轮不累计）
 	msg := fmt.Sprintf("名称核对完成: 共%d只(去重%d)，修正%d只，24h内已核对跳过%d只，联网%d只", total, len(seen), fixed, skipped, len(seen)-skipped)
 	logger.SugaredLogger.Infof("%s", msg)
-	// A: 强制重算无条件执行（纯本地，不依赖名称核对成败）
-	FillAllTrackHoldings(true)
-	logger.SugaredLogger.Infof("强制重算回填完成(修正名称后续步)")
+	// A: 回填无条件执行（纯本地幂等补漏，不依赖名称核对成败；已填格不动）
+	FillAllTrackHoldings(false)
+	logger.SugaredLogger.Infof("名称修正后增量补漏回填完成")
 	return msg
 }
