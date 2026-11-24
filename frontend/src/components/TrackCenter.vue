@@ -285,17 +285,20 @@ const isNiuZhiTab = computed(() => {
 // 再切 mode，再按【新】mode key 恢复，最后重载列表。v-model 陷阱：watch 触发时 mode 已变。
 function onSwitchMode(m) {
   if (!isNiuZhiTab.value || !activeStrategy.value) { niuzhiMode.value = m; return }
+  // [v9f.17.38] 与策略切换同构：离开存快照→切mode→整块还原
   _restoring = true
-  saveQueryState()               // 旧 mode key
+  saveQueryState()
   niuzhiMode.value = m
-  const q = loadQueryState()     // 新 mode key
-  queryRows.value = q.rows || []
-  queryBatchIds.value = q.batchIds || []
-  if (q.start) backfillStart.value = q.start
-  if (q.end) backfillEnd.value = q.end
-  items.value = []               // [v9f.17.36] 清旧 mode 明细防残留
-  stat.value = {}
+  restoreInto(loadQueryState())
+  const q2 = loadQueryState()
   setTimeout(() => { _restoring = false }, 0)
+  if (!q2.itemsSnap) {
+    const id = Number(activeStrategy.value)
+    const owner = curOwner()
+    GetTrackBatches(id).then((res) => { if (curOwner() === owner) batches.value = res || [] })
+    window.go.main.App.GetRecentTrackItemsMode(id, m || '', 500).then((res) => { if (curOwner() === owner) { items.value = res || []; saveQueryState() } })
+  }
+  return
   checkedBatches.value = []
   const id = Number(activeStrategy.value)
   GetTrackBatches(id).then((res) => { batches.value = res || [] })
@@ -551,11 +554,9 @@ function loadStrategies() {
 // 同步清掉旧策略的明细与统计，查询叠加按当前 key 重新恢复——切换间隙绝不显示旧策略数据。
 watch([activeStrategy, niuzhiMode], () => {
   if (_restoring || !activeStrategy.value) return
-  items.value = []
-  stat.value = {}
   const q = loadQueryState()
-  queryRows.value = q.rows || []
-  queryBatchIds.value = q.batchIds || []
+  restoreInto(q)
+  if (!q.itemsSnap) refresh()
 })
 
 function onSwitchStrategy(key) {
@@ -564,17 +565,12 @@ function onSwitchStrategy(key) {
   // saveQueryState() 实际把旧策略的 rows/batchIds 写进了【新】策略的 key → 所有策略状态互相污染
   // （同一份并集 rows、batchIds 攒满全部批次id → 查询"新增0条"外观失效、清空后被污染回来、批次不独立）。
   // 修复：tab 改单向 :value 绑定，此处先按【旧】key 保存，再切 id，再按【新】key 读取。
+  // [v9f.17.38] 重写：离开时保存画面快照 → 切id → 进入时整块还原快照。
+  // _restoring 全程罩住（含 setTimeout 回调内的 watch 触发点），恢复动作全部走 restoreInto。
   _restoring = true
-  saveQueryState()               // 此时 activeStrategy 仍是旧策略 → 写旧 key
-  activeStrategy.value = key     // 现在才真正切换
-  const q = loadQueryState()     // 读新策略自己的 key
-  queryRows.value = q.rows || []
-  queryBatchIds.value = q.batchIds || []
-  if (q.start) backfillStart.value = q.start
-  if (q.end) backfillEnd.value = q.end
-  items.value = []               // [v9f.17.36] 先清旧策略明细，防止加载间隙显示旧策略批次
-  stat.value = {}                // [v9f.17.36] 先清旧策略统计，防切换残留（加载完成由 refresh 回填）
-  setTimeout(() => { _restoring = false }, 0)
+  saveQueryState()               // 离开：写旧策略 key（快照=离开时画面，含空画面）
+  activeStrategy.value = key     // 切 id
+  restoreInto(loadQueryState())  // 进入：整块还原新策略 key 的快照（空就还原空）
   // v9c.4: 共用date-picker但各tab记住各自日期——切tab时把组件值切到该tab上次用的
   const s = strategies.value.find(x => String(x.id) === activeStrategy.value)
   if (s && /牛指/.test(s.name || '')) {
@@ -582,7 +578,23 @@ function onSwitchStrategy(key) {
   } else if (s && /一夜/.test(s.name || '')) {
     niuzhiDateTs.value = overnightDateTs.value
   }
-  refresh()
+  // 只在"没有快照记录过"的策略上才拉默认明细（首次访问）；有快照一律还原，绝不刷新覆盖
+  const q = loadQueryState()
+  if (!q.itemsSnap) {
+    refresh()
+  } else {
+    setTimeout(() => { _restoring = false }, 0)
+  }
+}
+
+// [v9f.17.38] 整块还原：把快照写进页面状态（_restoring 罩住期间调用）
+function restoreInto(q) {
+  queryRows.value = q.rows || []
+  queryBatchIds.value = q.batchIds || []
+  items.value = q.itemsSnap || []      // 没快照=首次访问=空，等 refresh 拉默认
+  stat.value = {}                      // 统计栏只跟 refresh 走，切换期间先隐藏
+  if (q.start) backfillStart.value = q.start
+  if (q.end) backfillEnd.value = q.end
 }
 
 // [v9f.17.31] 刷新=纯读库：查询只显示本地已保存的最新回填结果，秒出不再转圈。
@@ -603,10 +615,11 @@ function refresh() {
   const mode = niuzhiMode.value || ''
   const owner = curOwner()
   GetTrackBatches(id).then((res) => { if (curOwner() === owner) batches.value = res || [] })
-  window.go.main.App.GetRecentTrackItemsMode(id, isNiuZhiTab.value ? mode : '', 500).then((res) => { if (curOwner() === owner) items.value = res || [] })
+  window.go.main.App.GetRecentTrackItemsMode(id, isNiuZhiTab.value ? mode : '', 500).then((res) => { if (curOwner() === owner) { items.value = res || []; saveQueryState() } })
   GetTrackStats().then((res) => {
     if (curOwner() !== owner) return
     stat.value = (res || []).find(s => String(s.strategyId) === activeStrategy.value) || {}
+    saveQueryState()             // [v9f.17.38] 画面变更即存快照（含统计触发后的 items），切换还原用
   })
 }
 
@@ -680,11 +693,15 @@ function loadQueryState() {
 }
 function saveQueryState() {
   try {
+    // [v9f.17.38] cleared 标记：空也是状态。清空后存 rows=[]+cleared=true，
+    // 切回来恢复"空"而不是把默认明细填回来（17.37残留问题根因之一：空没被记住）
     localStorage.setItem(lsKey(), JSON.stringify({
       start: backfillStart.value, end: backfillEnd.value,
-      rows: queryRows.value, batchIds: queryBatchIds.value
+      rows: queryRows.value, batchIds: queryBatchIds.value,
+      itemsSnap: items.value,      // [v9f.17.38] 默认明细也进快照：切换后恢复的就是用户离开时的画面
+      cleared: queryRows.value.length === 0 && items.value.length === 0
     }))
-    console.log('[trackQuery] 已保存 key=', lsKey(), 'rows=', queryRows.value.length)
+    console.log('[trackQuery] 已保存 key=', lsKey(), 'rows=', queryRows.value.length, 'cleared=', queryRows.value.length === 0 && items.value.length === 0)
   } catch (e) {
     console.error('[trackQuery] 保存失败(可能超出localStorage容量):', e)
   }

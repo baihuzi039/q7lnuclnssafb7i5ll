@@ -342,7 +342,16 @@ func fillItemHoldings(item *models.TrackItem, batch models.TrackBatch) bool {
 				setVal2(&item.NextClosePct, pct(r.Close))
 			}
 		} else {
-			suspends = append(suspends, itoa(mIdx))
+			// [v9f.17.38] 17.30残余bug：suspends 原记录市场日历下标 mIdx，锚点修正后
+			// 前端按持仓日序号 slotIdx 显示"停"，必须换算，否则停牌标错位/丢失
+			// （002374 截图：1日格空但不标"停"——市场下标≠持仓日序号）
+			suspends = append(suspends, itoa(slotIdx+1)) // 前端 holdIndex 从 1 起
+			if slotIdx == 0 {                            // [v9f.17.38] 次日停牌标记（此前从未赋值，前端永远不显示"停"）
+				if !item.SuspendNext {
+					item.SuspendNext = true
+					updated = true
+				}
+			}
 		}
 	}
 	sd := strings.Join(suspends, ",")
